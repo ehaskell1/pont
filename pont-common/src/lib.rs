@@ -1,29 +1,23 @@
-use std::collections::{HashMap, HashSet};
 use serde::{Serialize, Deserialize};
 
-use rand::thread_rng;
-use rand::seq::SliceRandom;
-
-#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub enum ClientMessage {
     CreateRoom(String),
     JoinRoom(String, String),
     Chat(String),
-    Play(Vec<(Piece, i32, i32)>),
-    Swap(Vec<Piece>),
+    Move(Move),
 
     Disconnected,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum ServerMessage {
     JoinedRoom {
         room_name: String,
-        players: Vec<(String, u32, bool)>,
-        active_player: usize,
-        player_index: usize,
-        board: Vec<((i32, i32), Piece)>,
-        pieces: Vec<Piece>,
+        opponent: Option<String>,
+        active_side: Side,
+        your_side: Side,
+        game: Game,
     },
     JoinFailed(String),
     Chat {
@@ -31,247 +25,153 @@ pub enum ServerMessage {
         message: String,
     },
     Information(String),
-    NewPlayer(String),
-    PlayerReconnected(usize),
-    PlayerDisconnected(usize),
-    PlayerTurn(usize),
-    Played(Vec<(Piece, i32, i32)>),
-    Swapped(usize),
-    MoveAccepted(Vec<Piece>),
+    OpponentJoined(String),
+    OpponentDisconnected,
+    OpponentMoved(Move),
+    MoveAccepted,
     MoveRejected,
-    PlayerScore {
-        delta: u32,
-        total: u32,
-    },
-    PiecesRemaining(usize),
-    ItsOver(usize),
+    ItsOver(Side),
 }
 
-#[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub enum Shape {
-    Clover,
-    Star,
-    Square,
-    Diamond,
-    Cross,
-    Circle,
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq, Hash)]
+pub enum Side {
+    Top, Bottom
 }
 
-#[derive(Copy, Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub enum Color {
-    Orange,
-    Yellow,
-    Green,
-    Red,
-    Blue,
-    Purple,
+impl Default for Side {
+    fn default() -> Self {
+        Self::Bottom
+    }
 }
 
-pub type Piece = (Shape, Color);
+impl Side {
+    pub fn opposite(self) -> Self {
+        use Side::*;
+        match self {
+            Top => Bottom,
+            Bottom => Top,
+        }
+    }
+}
 
-#[derive(Debug, Deserialize, Serialize)]
+pub type Position = (u8, u8);
+
+pub const WIDTH: u8 = 15;
+pub const HEIGHT: u8 = 21;
+pub const CENTER: Position = (WIDTH / 2, HEIGHT / 2);
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub enum Move {
+    Man(Position),
+    Ball(Vec<Position>),
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Deserialize, Serialize, Debug)]
+pub enum PositionState {
+    Empty, Man, Ball,
+}
+
+pub fn ball_in_bounds(pos: Position) -> bool {
+    let (x, y) = pos;
+    x < WIDTH && y < HEIGHT
+}
+
+pub fn man_in_bounds(pos: Position) -> bool {
+    let (x, y) = pos;
+    x < WIDTH && y >= 1 && y < (HEIGHT - 1)
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Game {
-    pub board: HashMap<(i32, i32), Piece>,
-    pub bag: Vec<Piece>,
+    pub board: [[PositionState; HEIGHT as usize]; WIDTH as usize],
+    pub ball: Position,
 }
 
 impl Game {
-    pub fn play(&mut self, ps: &[(Piece, i32, i32)]) -> Option<u32> {
-        for (p, x, y) in ps {
-            use std::collections::hash_map::Entry;
-            match self.board.entry((*x, *y)) {
-                Entry::Occupied(_) => return None,
-                Entry::Vacant(v) => { v.insert(*p); }
-            }
-        }
-        let mut score = 0;
-        let mut seen_rows = HashSet::new();
-        let mut seen_cols = HashSet::new();
-        let f = |v: Vec<(Piece, (i32, i32))>| -> Vec<(i32, i32)> {
-            let mut v = v.into_iter()
-                .map(|(_p, (x, y))| (x, y))
-                .collect::<Vec<_>>();
-            v.sort();
-            v
-        };
-        for (_piece, x, y) in ps {
-            let row = f(Self::explore_from(&self.board, |i| (*x + i, *y)));
-            if row.len() > 1 && seen_rows.insert(row[0]) {
-                score += row.len();
-                if row.len() == 6 {
-                    score += 6;
-                }
-            }
-
-            let col = f(Self::explore_from(&self.board, |i| (*x, *y + i)));
-            if col.len() > 1 && seen_cols.insert(col[0]) {
-                score += col.len();
-                if col.len() == 6 {
-                    score += 6;
-                }
-            }
-        }
-        Some(score as u32)
-    }
-
-    pub fn shuffle(&mut self) {
-        self.bag.shuffle(&mut thread_rng());
-    }
-
-    pub fn deal(&mut self, n: usize) -> HashMap<Piece, usize> {
-        let mut out = HashMap::new();
-        for _ in 0..n {
-            if let Some(p) = self.bag.pop() {
-                *out.entry(p).or_insert(0) += 1;
-            }
-        }
-        out
-    }
-
-    pub fn swap(&mut self, pieces: &[Piece]) -> Option<Vec<Piece>> {
-        if pieces.len() <= self.bag.len() {
-            let mut out = Vec::new();
-            for _ in 0..pieces.len() {
-                out.push(self.bag.pop().unwrap());
-            }
-            for p in pieces.iter() {
-                self.bag.push(*p);
-            }
-            self.bag.shuffle(&mut thread_rng());
-            Some(out)
+    pub fn winner(&self) -> Option<Side> {
+        let (_, y) = self.ball;
+        if y == 0 {
+            Some(Side::Bottom)
+        } else if y == HEIGHT - 1 {
+            Some(Side::Top)
         } else {
             None
         }
     }
-
-    fn connected(board: &HashMap<(i32, i32), Piece>) -> bool {
-        let mut todo: Vec<(i32, i32)> =
-            board.keys().take(1).cloned().collect();
-
-        let mut seen = HashSet::new();
-        while let Some(t) = todo.pop() {
-            if seen.insert(t) {
-                for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)].iter() {
-                    let c = (t.0 + dx, t.1 + dy);
-                    if board.contains_key(&c) {
-                        todo.push(c);
-                    }
-                }
-            }
+    pub fn place_man(&mut self, pos: Position) -> bool {
+        if man_in_bounds(pos) && self.state_at(pos) == PositionState::Empty {
+            self.set_state(pos, PositionState::Man);
+            true
+        } else {
+            false
         }
-
-        seen.len() == board.len()
     }
 
-    pub fn is_linear(board: &HashSet<(i32, i32)>) -> bool {
-        let mut x_positions = HashSet::new();
-        let mut y_positions = HashSet::new();
-        for (x, y) in board.iter() {
-            x_positions.insert(x);
-            y_positions.insert(y);
+    pub fn move_ball(&mut self, jumps: Vec<Position>) -> Option<Vec<Position>> {
+        let mut scratch = self.clone();
+        let mut remove = Vec::new();
+        for pos in jumps {
+            if ball_in_bounds(pos) {
+                if let Some(mut r) = scratch.ball_jump(pos) {
+                    remove.append(&mut r);
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            }
         }
-        x_positions.len() == 1 || y_positions.len() == 1
+        std::mem::swap(self, &mut scratch);
+        Some(remove)
     }
 
-    fn explore_from<T>(board: &HashMap<(i32, i32), Piece>, f: T)
-        -> Vec<(Piece, (i32, i32))>
-        where T: Fn(i32) -> (i32, i32)
-    {
-            let mut out = Vec::new();
-            let mut run = |g: &dyn Fn(i32) -> i32| {
-                for i in 0.. {
-                    let c = f(g(i));
-                    if let Some(piece) = board.get(&c) {
-                        out.push((*piece, c));
-                    } else {
-                        break;
-                    }
-                }
-            };
-            run(&|i| i);
-            run(&|i| (-i - 1));
-            out
+    fn ball_jump(&mut self, to: Position) -> Option<Vec<Position>> {
+        let dx = to.0 as i8 - self.ball.0 as i8;
+        let dy = to.1 as i8 - self.ball.1 as i8;
+        if dx != 0 && dy != 0 && dx.abs() != dy.abs() {
+            return None;
+        }
+        if std::cmp::max(dx.abs(), dy.abs()) < 2 {
+            return None;
+        }
+        self.set_state(self.ball, PositionState::Empty);
+        self.ball = ((self.ball.0 as i8 + dx.signum()) as u8,
+                     (self.ball.1 as i8 + dy.signum()) as u8);
+        let mut remove = Vec::new();
+        while self.ball != to {
+            if self.state_at(self.ball) != PositionState::Man {
+                return None;
+            }
+            self.set_state(self.ball, PositionState::Empty);
+            remove.push(self.ball);
+            self.ball = ((self.ball.0 as i8 + dx.signum()) as u8,
+                         (self.ball.1 as i8 + dy.signum()) as u8);
+        }
+        if self.state_at(self.ball) != PositionState::Empty {
+            return None;
+        }
+        self.set_state(self.ball, PositionState::Ball);
+        Some(remove)
     }
 
-    // Checks whether the given board is valid,
-    // returning a vec of invalid piece locations
-    pub fn invalid(board: &HashMap<(i32, i32), Piece>) -> HashSet<(i32, i32)> {
-        // The empty board has no invalid pieces, by definition
-        if board.is_empty() {
-            return HashSet::new();
-        }
+    fn set_state(&mut self, pos: Position, state: PositionState) {
+        let (x, y) = pos;
+        self.board[x as usize][y as usize] = state;
+    }
 
-        // If a board has disconnected components, then it's all invalid
-        let todo = board.keys().cloned().collect();
-        if !Self::connected(board) {
-            return todo;
-        }
-
-        let mut checked_h = HashSet::new();
-        let mut checked_v = HashSet::new();
-
-        let mut out = HashSet::new();
-
-        let check = |pieces: &[(Piece, (i32, i32))]| -> bool {
-            let mut seen_colors = HashSet::new();
-            let mut seen_shapes = HashSet::new();
-            let mut seen_pieces = HashSet::new();
-            for (piece, _pos) in pieces {
-                // Detect duplicate pieces
-                if !seen_pieces.insert(*piece) {
-                    return false;
-                }
-                seen_colors.insert(piece.0);
-                seen_shapes.insert(piece.1);
-            }
-            seen_colors.len() == 1 || seen_shapes.len() == 1
-        };
-
-        // Check that each row and column contains valid pieces
-        for (x, y) in todo.into_iter() {
-            if !checked_h.contains(&(x, y)) {
-                let row = Self::explore_from(board, |i| (x + i, y));
-                for (_, c) in row.iter() {
-                    checked_h.insert(*c);
-                }
-                if !check(&row) {
-                    for (_, c) in row.into_iter() {
-                        out.insert(c);
-                    }
-                }
-            }
-            if !checked_v.contains(&(x, y)) {
-                let col = Self::explore_from(board, |i| (x, y + i));
-                for (_, c) in col.iter() {
-                    checked_v.insert(*c);
-                }
-                if !check(&col) {
-                    for (_, c) in col.into_iter() {
-                        out.insert(c);
-                    }
-                }
-            }
-        }
-        out
+    fn state_at(&mut self, pos: Position) -> PositionState {
+        let (x, y) = pos;
+        self.board[x as usize][y as usize]
     }
 }
 
 impl Default for Game {
     fn default() -> Game {
-        use Color::*;
-        use Shape::*;
-        let mut bag = Vec::new();
-        for c in &[Orange, Yellow, Green, Red, Blue, Purple] {
-            for s in &[Clover, Star, Square, Diamond, Cross, Circle] {
-                for _ in 0..3 {
-                    bag.push((*s, *c));
-                }
-            }
-        }
-        bag.shuffle(&mut thread_rng());
-
-        Game {
-            board: HashMap::new(), bag
-        }
+        let mut game = Self {
+            board: [[PositionState::Empty; HEIGHT as usize]; WIDTH as usize],
+            ball: CENTER,
+        };
+        game.set_state(game.ball, PositionState::Ball);
+        game
     }
 }

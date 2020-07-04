@@ -17,13 +17,15 @@ use web_sys::{
     HtmlElement,
     HtmlInputElement,
     MessageEvent,
+    MouseEvent,
     PointerEvent,
     ProgressEvent,
     SvgGraphicsElement,
     WebSocket,
 };
 
-use pont_common::{ClientMessage, ServerMessage, Shape, Color, Piece, Game};
+use pont_common::{ClientMessage, ServerMessage, Side, Game, Position, Move, PositionState,
+ball_in_bounds, man_in_bounds, WIDTH, HEIGHT};
 
 // Minimal logging macro
 macro_rules! console_log {
@@ -94,8 +96,6 @@ struct Dragging {
     target: Element,
     shadow: Element,
     offset: Pos,
-    grid_origin: Option<(i32, i32)>,
-    hand_index: usize,
 }
 
 #[derive(PartialEq)]
@@ -130,7 +130,7 @@ impl TileAnimation {
 }
 
 #[derive(PartialEq)]
-struct DropToGrid {
+struct DropBall {
     anim: TileAnimation,
     shadow: Element,
 }
@@ -138,39 +138,28 @@ struct DropToGrid {
 #[derive(PartialEq)]
 struct DropManyToGrid(Vec<TileAnimation>);
 #[derive(PartialEq)]
-struct ReturnToHand(TileAnimation);
+struct ReturnBall(TileAnimation);
 #[derive(PartialEq)]
-struct ReturnAllToHand(Vec<TileAnimation>);
-#[derive(PartialEq)]
-struct ConsolidateHand(Vec<TileAnimation>);
+struct JumpBall(Vec<TileAnimation>);
 
 #[derive(PartialEq)]
 enum DragAnim {
-    DropToGrid(DropToGrid),
+    DropBall(DropBall),
+    ReturnBall(ReturnBall),
     DropManyToGrid(DropManyToGrid),
-    ReturnToHand(ReturnToHand),
-    ReturnAllToHand(ReturnAllToHand),
-    ConsolidateHand(ConsolidateHand),
+    JumpBall(JumpBall),
 }
 
 #[derive(PartialEq)]
 enum BoardState {
     Idle,
     Dragging(Dragging),
-    Panning(Panning),
     Animation(DragAnim),
 }
 
 enum DropTarget {
-    DropToGrid(i32, i32),
-    ReturnToGrid(i32, i32),
-    Exchange,
-    ReturnToHand,
-}
-
-enum Move {
-    Place(Vec<(Piece, i32, i32)>),
-    Swap(Vec<Piece>),
+    DropBall(Position),
+    ReturnBall,
 }
 
 pub struct Board {
@@ -180,39 +169,36 @@ pub struct Board {
 
     state: BoardState,
 
-    pan_group: Element,
-    pan_offset: Pos,
+    pieces_group: Element,
 
-    grid: HashMap<(i32, i32), Piece>,
-    tentative: HashMap<(i32, i32), usize>,
-    exchange_list: Vec<usize>,
-    pieces_remaining: usize,
-    hand: Vec<(Piece, Element)>,
+    game: Game,
+    mov: Option<Move>,
+    grid: HashMap<Position, Element>,
 
     accept_button: HtmlButtonElement,
-    reject_button: HtmlButtonElement,
-    exchange_div: Element,
+    undo_button: HtmlButtonElement,
 
     pointer_down_cb: JsClosure<PointerEvent>,
     pointer_move_cb: JsClosure<PointerEvent>,
     pointer_up_cb: JsClosure<PointerEvent>,
     touch_start_cb: JsClosure<Event>,
 
-    pan_move_cb: JsClosure<PointerEvent>,
-    pan_end_cb: JsClosure<Event>,
-
     anim_cb: JsClosure<f64>,
 }
 
 impl Board {
-    fn new(doc: &Document)
+    fn new(doc: &Document, game: Game)
         -> JsResult<Board>
     {
-        let pan_rect = doc.get_element_by_id("pan_rect")
-            .expect("Could not find pan rect");
-        set_event_cb(&pan_rect, "pointerdown", move |evt: PointerEvent| {
+        let board_rect = doc.get_element_by_id("board_rect")
+            .expect("Could not find board_rect");
+        set_event_cb(&board_rect, "click", move |evt: MouseEvent| {
             HANDLE.lock().unwrap()
-                .on_pan_start(evt)
+                .on_board_click(evt)
+        }).forget();
+        set_event_cb(&board_rect, "pointermove", move |evt: PointerEvent| {
+            HANDLE.lock().unwrap()
+                .on_board_hover(evt)
         }).forget();
 
         let accept_button = doc.get_element_by_id("accept_button")
@@ -223,12 +209,12 @@ impl Board {
                 .on_accept_button(evt)
         }).forget();
 
-        let reject_button = doc.get_element_by_id("reject_button")
-            .expect("Could not find reject_button")
+        let undo_button = doc.get_element_by_id("undo_button")
+            .expect("Could not find undo_button")
             .dyn_into()?;
-        set_event_cb(&reject_button, "click", move |evt: Event| {
+        set_event_cb(&undo_button, "click", move |evt: Event| {
             HANDLE.lock().unwrap()
-                .on_reject_button(evt)
+                .on_undo_button(evt)
         }).forget();
 
         let pointer_down_cb = build_cb(move |evt: PointerEvent| {
@@ -247,14 +233,6 @@ impl Board {
             HANDLE.lock().unwrap()
                 .on_anim(evt)
         });
-        let pan_move_cb = build_cb(move |evt: PointerEvent| {
-            HANDLE.lock().unwrap()
-                .on_pan_move(evt)
-        });
-        let pan_end_cb = build_cb(move |evt: Event| {
-            HANDLE.lock().unwrap()
-                .on_pan_end(evt)
-        });
         let touch_start_cb = build_cb(move |evt: Event| {
             evt.prevent_default();
             Ok(())
@@ -265,33 +243,57 @@ impl Board {
             .dyn_into()?;
         let svg_div = doc.get_element_by_id("svg_div")
             .expect("Could not find svg div");
-        let pan_group = doc.get_element_by_id("pan_group")
-            .expect("Could not find pan_group");
-        let exchange_div = doc.get_element_by_id("exchange_div")
-            .expect("Could not find exchange_div");
+        let pieces_group = doc.get_element_by_id("pieces_group")
+            .expect("Could not find pieces_group");
 
-        let out = Board {
+        let mut out = Board {
             doc: doc.clone(),
             state: BoardState::Idle,
+            mov: None,
             svg, svg_div,
-            pan_group,
-            pan_offset: (0.0, 0.0),
-            grid: HashMap::new(),
-            tentative: HashMap::new(),
-            exchange_list: Vec::new(),
-            hand: Vec::new(),
+            pieces_group,
             pointer_down_cb,
             pointer_up_cb,
             pointer_move_cb,
             touch_start_cb,
-            pan_move_cb,
-            pan_end_cb,
             anim_cb,
             accept_button,
-            reject_button,
-            exchange_div,
-            pieces_remaining: 0,
+            undo_button,
+            game,
+            grid: HashMap::new(),
         };
+
+        let ball = out.new_ball()?;
+        out.pieces_group.append_child(&ball)?;
+        ball.class_list().add_1("placed")?;
+        ball.set_attribute("transform",
+                          &format!("translate({} {})", out.game.ball.0 * 10, out.game.ball.1 * 10))?;
+
+        let mut options = AddEventListenerOptions::new();
+        options.passive(false);
+        ball.add_event_listener_with_callback_and_add_event_listener_options(
+            "pointerdown",
+            out.pointer_down_cb.as_ref().unchecked_ref(),
+            &options)?;
+        ball.add_event_listener_with_callback_and_add_event_listener_options(
+            "touchstart",
+            out.touch_start_cb.as_ref().unchecked_ref(),
+            &options)?;
+
+        out.grid.insert(out.game.ball, ball);
+
+        for x in 0..WIDTH {
+            for y in 0..HEIGHT {
+                if let PositionState::Man = out.game.board[x as usize][y as usize] {
+                    let man = out.new_man()?;
+                    out.pieces_group.append_child(&man)?;
+                    man.class_list().add_1("placed")?;
+                    man.set_attribute("transform",
+                                      &format!("translate({} {})", x * 10, y * 10))?;
+                    out.grid.insert((x, y), man);
+                }
+            }
+        }
 
         Ok(out)
     }
@@ -302,7 +304,7 @@ impl Board {
         } else {
             self.svg_div.class_list().add_1("nyt")?;
         }
-        self.update_exchange_div(is_my_turn)
+        Ok(())
     }
 
     fn get_transform(e: &Element) -> Pos {
@@ -319,95 +321,57 @@ impl Board {
         (dx, dy)
     }
 
-    fn mouse_pos(&self, evt: &PointerEvent) -> Pos {
+    fn mouse_pos(&self, evt: &MouseEvent) -> Pos {
         let mat = self.svg.get_screen_ctm().unwrap();
         let x = (evt.client_x() as f32 - mat.e()) / mat.a();
         let y = (evt.client_y() as f32 - mat.f()) / mat.d();
         (x, y)
     }
 
-    fn on_pan_start(&mut self, evt: PointerEvent) -> JsError {
-        if self.state != BoardState::Idle {
+    fn on_board_click(&mut self, evt: MouseEvent) -> JsError {
+        if self.state != BoardState::Idle || self.mov.is_some() {
             return Ok(());
         }
-        // No panning before placing the first piece, to prevent griefing by
-        // placing the piece far from the visible region.
-        if self.grid.is_empty() {
-            return Ok(());
-        }
-
         evt.prevent_default();
-        let target = evt.target()
-            .unwrap()
-            .dyn_into::<Element>()?;
-        target.set_pointer_capture(evt.pointer_id())?;
 
-        let mut options = AddEventListenerOptions::new();
-        options.passive(false);
-        let pointer_id = evt.pointer_id();
-        target.set_pointer_capture(pointer_id)?;
-        target.add_event_listener_with_callback_and_add_event_listener_options(
-            "pointermove",
-            self.pan_move_cb.as_ref().unchecked_ref(), &options)?;
-        target.add_event_listener_with_callback_and_add_event_listener_options(
-            "pointerup",
-            self.pan_end_cb.as_ref().unchecked_ref(), &options)?;
-        self.doc.body()
-            .expect("Could not get boby")
-            .add_event_listener_with_callback_and_add_event_listener_options(
-                "pointermove",
-                self.pan_move_cb.as_ref().unchecked_ref(), &options)?;
+        let (mx, my) = self.mouse_pos(&evt);
+        let x = mx.round() as i32 / 10;
+        let y = my.round() as i32 / 10;
+        if x < 0 || y < 0 {
+            return Ok(());
+        }
+        let position = (x as u8, y as u8);
+        if !man_in_bounds(position) {
+            return Ok(());
+        }
+        let man = self.new_man()?;
+        self.pieces_group.append_child(&man)?;
+        man.class_list().add_1("piece")?;
+        man.set_attribute("transform",
+                          &format!("translate({} {})", x * 10, y * 10))?;
+        self.grid.insert(position, man);
 
-        let p = self.mouse_pos(&evt);
-        self.state = BoardState::Panning(Panning {
-            target,
-            pointer_id,
-            pos: (p.0 - self.pan_offset.0, p.1 - self.pan_offset.1)
-        });
+        self.mov = Some(Move::Man(position));
+
+        self.accept_button.set_disabled(false);
+        self.undo_button.set_disabled(false);
+
 
         Ok(())
     }
 
-    fn on_pan_move(&mut self, evt: PointerEvent) -> JsError {
-        if let BoardState::Panning(d) = &self.state {
-            evt.prevent_default();
-
-            let p = self.mouse_pos(&evt);
-            self.pan_offset = (p.0 - d.pos.0, p.1 - d.pos.1);
-            self.pan_group.set_attribute("transform",
-                                   &format!("translate({} {})",
-                                   self.pan_offset.0,
-                                   self.pan_offset.1))
-        } else {
-            Err(JsValue::from_str("Invalid state (pan move)"))
-        }
-    }
-
-    fn on_pan_end(&mut self, evt: Event) -> JsError {
-        evt.prevent_default();
-
-        if let BoardState::Panning(d) = &self.state {
-            d.target.release_pointer_capture(d.pointer_id)?;
-            d.target.remove_event_listener_with_callback("pointermove",
-                    self.pan_move_cb.as_ref().unchecked_ref())?;
-            d.target.remove_event_listener_with_callback("pointerup",
-                    self.pan_end_cb.as_ref().unchecked_ref())?;
-            self.doc.body()
-                .expect("Could not get boby")
-                .remove_event_listener_with_callback(
-                    "pointermove",
-                    self.pan_move_cb.as_ref().unchecked_ref())?;
-            self.state = BoardState::Idle;
-            Ok(())
-        } else {
-            Err(JsValue::from_str("Invalid state (pan end)"))
-        }
+    fn on_board_hover(&mut self, evt: PointerEvent) -> JsError {
+        Ok(())
+        // TODO: show invisible man over location
     }
 
     fn on_pointer_down(&mut self, evt: PointerEvent) -> JsError {
         // We only drag if nothing else is dragging;
         // no fancy multi-touch dragging here.
         if self.state != BoardState::Idle {
+            return Ok(());
+        }
+        if let Some(Move::Man(_)) = self.mov {
             return Ok(());
         }
         evt.prevent_default();
@@ -424,40 +388,22 @@ impl Board {
         shadow.set_attribute("x", "0.25")?;
         shadow.set_attribute("y", "0.25")?;
         shadow.set_attribute("visibility", "hidden")?;
-        self.pan_group.append_child(&shadow)?;
+        self.pieces_group.append_child(&shadow)?;
 
         // Walk up the tree to find the piece's <g> group,
         // which sets its position with a translation
         while !target.has_attribute("transform") {
             target = target.parent_node().unwrap().dyn_into::<Element>()?;
         }
-        let (mx, my) = self.mouse_pos(&evt);
+        let (mx, my) = self.mouse_pos(evt.as_ref());
         let (mut tx, mut ty) = Self::get_transform(&target);
 
-        let (hand_index, grid_origin) = if my > 185.0 {
-            // Picking from hand
-            let i = (tx.round() as i32 - 5) / 15;
-            self.svg.remove_child(&target)?;
-            (i as usize, None)
-        } else {
-            // Picking from tentative grid
-            let x = tx.round() as i32 / 10;
-            let y = ty.round() as i32 / 10;
-            self.pan_group.remove_child(&target)?;
-            tx += self.pan_offset.0;
-            ty += self.pan_offset.1;
-            target.set_attribute("transform",
-                                   &format!("translate({} {})", tx, ty))?;
-            let hand_index = self.tentative.remove(&(x, y)).unwrap();
-            if self.tentative.is_empty() {
-                self.accept_button.set_disabled(true);
-                self.reject_button.set_disabled(true);
-            }
-            self.update_exchange_div(true)?;
-            self.mark_invalid()?;
-            (hand_index, Some((x, y)))
-        };
-        target.class_list().remove_1("invalid")?;
+        let x = tx.round() as i32 / 10;
+        let y = ty.round() as i32 / 10;
+        self.pieces_group.remove_child(&target)?;
+        self.grid.remove(&(x as u8, y as u8));
+        self.accept_button.set_disabled(true);
+        self.undo_button.set_disabled(true);
 
         // Move to the back of the SVG object, so it's on top
         self.svg.append_child(&target)?;
@@ -481,8 +427,6 @@ impl Board {
             target,
             shadow,
             offset: (mx - tx, my - ty),
-            hand_index,
-            grid_origin,
         });
         Ok(())
     }
@@ -491,63 +435,41 @@ impl Board {
         if let BoardState::Dragging(d) = &self.state {
             // Get the position of the tile being dragged
             // in SVG frame coordinates (0-200)
-            let (mut x, mut y) = self.mouse_pos(&evt);
+            let (mut x, mut y) = self.mouse_pos(evt.as_ref());
             x -= d.offset.0;
             y -= d.offset.1;
 
-            // Clamp to the window's bounds
-            for c in [&mut x, &mut y].iter_mut() {
-                if **c < 0.0 {
-                    **c = 0.0;
-                } else if **c > 190.0 {
-                    **c = 190.0;
-                }
+            // Clamp to grid
+            if x < 0.0 {
+                x = 0.0;
+            }
+            if y < 0.0 {
+                y = 0.0;
+            }
+            if x > 190.0 {
+                x = 190.0;
+            }
+            if y > 165.0 {
+                y = 165.0;
             }
 
-            // If we've started exchanging tiles, then prevent folks from
-            // dragging onto the grid.
-            if !self.exchange_list.is_empty() && y < 175.0 {
-                y = 175.0;
-            }
             let pos = (x, y);
 
-            // If the tile is off the bottom of the grid, then we propose
-            // to return it to the hand.
-            if y >= 165.0 {
-                if self.tentative.is_empty() && x >= 95.0 && x <= 140.0 &&
-                   self.exchange_list.len() < self.pieces_remaining
-                {
-                    return Ok((pos, DropTarget::Exchange));
-                } else {
-                    return Ok((pos, DropTarget::ReturnToHand));
+            let tx = (x / 10.0).round() as u8;
+            let ty = (y / 10.0).round() as u8;
+
+            if let Some(Move::Ball(jumps)) = &self.mov {
+                let mut jumps = jumps.clone();
+                jumps.push((tx, ty));
+                if self.game.clone().move_ball(jumps).is_some() {
+                    return Ok((pos, DropTarget::DropBall((tx, ty))));
                 }
+            } else {
+                unreachable!();
             }
 
-            // Otherwise, we shift the tile's coordinates by the panning
-            // of the main grid, then check whether we can place it
-            x -= self.pan_offset.0;
-            y -= self.pan_offset.1;
-
-            let tx = (x / 10.0).round() as i32;
-            let ty = (y / 10.0).round() as i32;
-
-            let offboard = {
-                let x = tx as f32 * 10.0 + self.pan_offset.0;
-                let y = ty as f32 * 10.0 + self.pan_offset.1;
-                x < 0.0 || y < 0.0 || y > 165.0 || x >= 190.0
-            };
-
-            let overlapping = self.grid.contains_key(&(tx, ty)) ||
-                              self.tentative.contains_key(&(tx, ty));
-            if !overlapping && !offboard {
-                return Ok((pos, DropTarget::DropToGrid(tx, ty)));
-            }
-
-            // Otherwise, return to either the hand or the grid
-            Ok((pos, match d.grid_origin {
-                None => DropTarget::ReturnToHand,
-                Some((gx, gy)) => DropTarget::ReturnToGrid(gx, gy),
-            }))
+            // Otherwise, return to the grid
+            Ok((pos, DropTarget::ReturnBall))
         } else {
             Err(JsValue::from_str("Invalid state (drop target)"))
         }
@@ -560,7 +482,7 @@ impl Board {
             let (pos, drop_target) = self.drop_target(&evt)?;
             d.target.set_attribute("transform",
                                    &format!("translate({} {})", pos.0, pos.1))?;
-            if let DropTarget::DropToGrid(gx, gy) = drop_target {
+            if let DropTarget::DropBall((gx, gy)) = drop_target {
                 d.shadow.set_attribute(
                     "transform", &format!("translate({} {})",
                          gx as f32 * 10.0, gy as f32 * 10.0))?;
@@ -571,27 +493,6 @@ impl Board {
         } else {
             Err(JsValue::from_str("Invalid state (pointer move)"))
         }
-    }
-
-    fn mark_invalid(&self) -> JsResult<bool> {
-        let mut b = self.grid.clone();
-        for (pos, index) in self.tentative.iter() {
-            b.insert(*pos, self.hand[*index].0);
-        }
-        let mut invalid = Game::invalid(&b);
-        if !Game::is_linear(&self.tentative.keys().cloned().collect()) {
-            for pos in self.tentative.keys() {
-                invalid.insert(*pos);
-            }
-        }
-        for (pos, index) in self.tentative.iter() {
-            if invalid.contains(pos) {
-                self.hand[*index].1.class_list().add_1("invalid")?;
-            } else {
-                self.hand[*index].1.class_list().remove_1("invalid")?;
-            }
-        }
-        Ok(invalid.is_empty())
     }
 
     fn on_pointer_up(&mut self, evt: PointerEvent) -> JsError {
@@ -611,98 +512,76 @@ impl Board {
 
             let (pos, drop_target) = self.drop_target(&evt)?;
             let drag_anim = match drop_target {
-                DropTarget::ReturnToHand => {
-                    self.pan_group.remove_child(&d.shadow)?;
-                    Some(DragAnim::ReturnToHand(ReturnToHand(
+                DropTarget::ReturnBall => {
+                    self.pieces_group.remove_child(&d.shadow)?;
+                    self.grid.insert(self.game.ball, d.target.clone());
+                    DragAnim::ReturnBall(ReturnBall(
                         TileAnimation {
                             target: d.target.clone(),
                             start: pos,
-                            end: ((d.hand_index * 15 + 5) as f32, 185.0),
+                            end: (self.game.ball.0 as f32 * 10.0, self.game.ball.1 as f32 * 10.0),
                             t0: evt.time_stamp()
-                        })))
+                        }))
                 },
-                DropTarget::DropToGrid(gx, gy) |
-                DropTarget::ReturnToGrid(gx, gy) => {
-                    self.tentative.insert((gx, gy), d.hand_index);
+                DropTarget::DropBall((gx, gy)) => {
+                    if self.mov.is_none() {
+                        self.mov = Some(Move::Ball(vec![]))
+                    }
+                    if let Some(Move::Ball(jumps)) = &mut self.mov {
+                        jumps.push((gx, gy));
+                    } else {
+                        unreachable!();
+                    }
+                    self.grid.insert((gx, gy), d.target.clone());
                     let target = d.target.clone();
-                    self.svg.remove_child(&target)?;
-                    self.pan_group.append_child(&target)?;
-                    Some(DragAnim::DropToGrid(DropToGrid{
+                    DragAnim::DropBall(DropBall {
                         anim: TileAnimation {
                             target,
-                            start: (pos.0 - self.pan_offset.0, pos.1 - self.pan_offset.1),
+                            start: (pos.0, pos.1),
                             end: (gx as f32 * 10.0, gy as f32 * 10.0),
                             t0: evt.time_stamp(),
                         },
                         shadow: d.shadow.clone(),
-                    }))
-                },
-                DropTarget::Exchange => {
-                    self.pan_group.remove_child(&d.shadow)?;
-                    self.exchange_list.push(d.hand_index);
-                    d.target.set_attribute("visibility", "hidden")?;
-                    self.update_exchange_div(true)?;
-                    self.accept_button.set_disabled(false);
-                    self.reject_button.set_disabled(false);
-
-                    // No animation here, because we wait for the server to
-                    // send back a MoveAccepted message then consolidate hand
-                    None
+                    })
                 },
             };
-            self.mark_invalid()?;
-            self.update_exchange_div(true)?;
-            if let Some(drag) = drag_anim {
-                self.state = BoardState::Animation(drag);
-                self.request_animation_frame()?;
-            } else {
-                self.state = BoardState::Idle;
-            }
+
+            self.state = BoardState::Animation(drag_anim);
+            self.request_animation_frame()?;
         }
         Ok(())
     }
 
     fn on_anim(&mut self, t: f64) -> JsError {
-        if let BoardState::Animation(drag) = &mut self.state {
+        if let BoardState::Animation(drag) = &self.state {
             match drag {
-                DragAnim::DropToGrid(d) => {
+                DragAnim::DropBall(d) => {
                     if d.anim.run(t)? {
                         self.request_animation_frame()?;
                     } else {
-                        self.pan_group.remove_child(&d.shadow)?;
+                        self.pieces_group.remove_child(&d.shadow)?;
+                        self.svg.remove_child(&d.anim.target)?;
+                        self.pieces_group.append_child(&d.anim.target)?;
                         self.state = BoardState::Idle;
-                        self.accept_button.set_disabled(!self.mark_invalid()?);
-                        self.reject_button.set_disabled(false);
+                        self.accept_button.set_disabled(false);
+                        self.undo_button.set_disabled(false);
                     }
                 },
-                DragAnim::ReturnToHand(d) => {
+                DragAnim::ReturnBall(d) => {
                     if d.0.run(t)? {
                         self.request_animation_frame()?;
                     } else {
+                        self.svg.remove_child(&d.0.target)?;
+                        self.pieces_group.append_child(&d.0.target)?;
                         self.state = BoardState::Idle;
-                        if !self.tentative.is_empty() {
-                            self.accept_button.set_disabled(!self.mark_invalid()?);
-                        } else if self.exchange_list.is_empty() {
+                        if self.mov.is_some() {
+                            self.accept_button.set_disabled(false);
+                        } else {
                             self.accept_button.set_disabled(true);
-                            self.reject_button.set_disabled(true);
+                            self.undo_button.set_disabled(true);
                         }
                     }
                 },
-                DragAnim::ReturnAllToHand(d) => {
-                    let mut any_running = false;
-                    for a in d.0.iter() {
-                        any_running |= a.run(t)?;
-                    }
-                    if any_running {
-                        self.request_animation_frame()?;
-                    } else {
-                        self.state = BoardState::Idle;
-                        self.accept_button.set_disabled(true);
-                        self.reject_button.set_disabled(true);
-                        self.update_exchange_div(true)?;
-                    }
-                },
-                DragAnim::ConsolidateHand(ConsolidateHand(d)) |
                 DragAnim::DropManyToGrid(DropManyToGrid(d)) => {
                     let mut any_running = false;
                     for a in d.iter() {
@@ -714,6 +593,21 @@ impl Board {
                         self.state = BoardState::Idle;
                     }
                 },
+                DragAnim::JumpBall(JumpBall(jumps)) => {
+                    let mut any_running = false;
+                    for a in jumps.iter() {
+                        if a.run(t)? {
+                            any_running = true;
+                            self.request_animation_frame()?;
+                            break;
+                        }
+                    }
+                    if !any_running {
+                        self.svg.remove_child(&jumps.last().unwrap().target)?;
+                        self.pieces_group.append_child(&jumps.last().unwrap().target)?;
+                        self.state = BoardState::Idle;
+                    }
+                }
             }
         }
         Ok(())
@@ -726,30 +620,7 @@ impl Board {
                                      .unchecked_ref())
     }
 
-    fn add_hand(&mut self, p: Piece) -> JsResult<Element> {
-        let g = self.new_piece(p)?;
-        self.svg.append_child(&g)?;
-        g.class_list().add_1("piece")?;
-        g.set_attribute("transform", &format!("translate({} 185)",
-                                              5 + 15 * self.hand.len()))?;
-
-        let mut options = AddEventListenerOptions::new();
-        options.passive(false);
-        g.add_event_listener_with_callback_and_add_event_listener_options(
-            "pointerdown",
-            self.pointer_down_cb.as_ref().unchecked_ref(),
-            &options)?;
-        g.add_event_listener_with_callback_and_add_event_listener_options(
-            "touchstart",
-            self.touch_start_cb.as_ref().unchecked_ref(),
-            &options)?;
-
-        self.hand.push((p, g.clone()));
-
-        Ok(g)
-    }
-
-    fn new_piece(&self, p: Piece) -> JsResult<Element> {
+    fn new_man(&self) -> JsResult<Element> {
         let g = self.doc.create_svg_element("g")?;
         let r = self.doc.create_svg_element("rect")?;
         r.class_list().add_1("tile")?;
@@ -757,96 +628,20 @@ impl Board {
         r.set_attribute("height", "9.5")?;
         r.set_attribute("x", "0.25")?;
         r.set_attribute("y", "0.25")?;
-        let s = match p.0 {
-            Shape::Circle => {
-                let s = self.doc.create_svg_element("circle")?;
-                s.set_attribute("r", "3.0")?;
-                s.set_attribute("cx", "5.0")?;
-                s.set_attribute("cy", "5.0")?;
-                s
-            },
-            Shape::Square => {
-                let s = self.doc.create_svg_element("rect")?;
-                s.set_attribute("width", "6.0")?;
-                s.set_attribute("height", "6.0")?;
-                s.set_attribute("x", "2.0")?;
-                s.set_attribute("y", "2.0")?;
-                s
-            }
-            Shape::Clover => {
-                let s = self.doc.create_svg_element("g")?;
-                for (x, y) in &[(5.0, 3.0), (5.0, 7.0), (3.0, 5.0), (7.0, 5.0)]
-                {
-                    let c = self.doc.create_svg_element("circle")?;
-                    c.set_attribute("r", "1.5")?;
-                    c.set_attribute("cx", &x.to_string())?;
-                    c.set_attribute("cy", &y.to_string())?;
-                    s.append_child(&c)?;
-                }
-                let r = self.doc.create_svg_element("rect")?;
-                r.set_attribute("width", "4.0")?;
-                r.set_attribute("height", "3.0")?;
-                r.set_attribute("x", "3.0")?;
-                r.set_attribute("y", "3.5")?;
-                s.append_child(&r)?;
 
-                let r = self.doc.create_svg_element("rect")?;
-                r.set_attribute("width", "3.0")?;
-                r.set_attribute("height", "4.0")?;
-                r.set_attribute("x", "3.5")?;
-                r.set_attribute("y", "3.0")?;
-                s.append_child(&r)?;
-
-                s
-            }
-            Shape::Diamond => {
-                let s = self.doc.create_svg_element("polygon")?;
-                s.set_attribute("points", "2,5 5,8 8,5 5,2")?;
-                s
-            }
-            Shape::Cross => {
-                let s = self.doc.create_svg_element("polygon")?;
-                s.set_attribute("points", "2,2 3.5,5 2,8 5,6.5 8,8 6.5,5 8,2 5,3.5")?;
-                s
-            }
-            Shape::Star => {
-                let g = self.doc.create_svg_element("g")?;
-                let s = self.doc.create_svg_element("polygon")?;
-                s.set_attribute("points", "3,3 4,5 3,7 5,6 7,7 6,5 7,3 5,4")?;
-                g.append_child(&s)?;
-                let s = self.doc.create_svg_element("polygon")?;
-                s.set_attribute("points", "1,5 4,6 5,9 6,6 9,5 6,4 5,1 4,4")?;
-                g.append_child(&s)?;
-                g
-            }
-        };
+        let s = self.doc.create_svg_element("circle")?;
+        s.set_attribute("r", "3.0")?;
+        s.set_attribute("cx", "5.0")?;
+        s.set_attribute("cy", "5.0")?;
         s.class_list().add_1("color")?;
 
         g.append_child(&r)?;
         g.append_child(&s)?;
-        g.class_list().add_1(match p.1 {
-            Color::Orange => "shape-orange",
-            Color::Yellow => "shape-yellow",
-            Color::Green => "shape-green",
-            Color::Red => "shape-red",
-            Color::Blue => "shape-blue",
-            Color::Purple => "shape-purple",
-        })?;
+        g.class_list().add_1("shape-orange")?;
 
         // Add carets on the corners based on color, to be accessible
         let mut pts = Vec::new();
-        if p.1 == Color::Orange || p.1 == Color::Yellow {
-            pts.push("0.5,0.5 3,0.5 0.5,3");
-        }
-        if p.1 == Color::Orange || p.1 == Color::Green {
-            pts.push("9.5,9.5 7,9.5 9.5,7");
-        }
-        if p.1 == Color::Red || p.1 == Color::Blue {
-            pts.push("0.5,9.5 3,9.5 0.5,7");
-        }
-        if p.1 == Color::Red || p.1 == Color::Purple {
-            pts.push("9.5,0.5 7,0.5 9.5,3");
-        }
+        pts.push("0.5,0.5 3,0.5 0.5,3");
 
         for poly in pts.into_iter() {
             let corner = self.doc.create_svg_element("polygon")?;
@@ -856,79 +651,85 @@ impl Board {
             g.append_child(&corner)?;
         }
 
+        Ok(g)
+    }
+
+    fn new_ball(&self) -> JsResult<Element> {
+        let g = self.doc.create_svg_element("g")?;
+        let r = self.doc.create_svg_element("rect")?;
+        r.class_list().add_1("tile")?;
+        r.set_attribute("width", "9.5")?;
+        r.set_attribute("height", "9.5")?;
+        r.set_attribute("x", "0.25")?;
+        r.set_attribute("y", "0.25")?;
+        let s = self.doc.create_svg_element("circle")?;
+        s.set_attribute("r", "3.0")?;
+        s.set_attribute("cx", "5.0")?;
+        s.set_attribute("cy", "5.0")?;
+        s.class_list().add_1("color")?;
+
+        g.append_child(&r)?;
+        g.append_child(&s)?;
+        g.class_list().add_1("shape-blue")?;
+
+        // Add carets on the corners based on color, to be accessible
+        let mut pts = Vec::new();
+        pts.push("0.5,9.5 3,9.5 0.5,7");
+
+        for poly in pts.into_iter() {
+            let corner = self.doc.create_svg_element("polygon")?;
+            corner.set_attribute("points", poly)?;
+            corner.class_list().add_1("corner")?;
+            corner.class_list().add_1("color")?;
+            g.append_child(&corner)?;
+        }
 
         Ok(g)
     }
 
-    fn add_piece(&mut self, p: Piece, x: i32, y: i32) -> JsResult<Element> {
-        self.grid.insert((x, y), p);
-
-        let g = self.new_piece(p)?;
-        self.pan_group.append_child(&g)?;
-        g.class_list().add_1("placed")?;
-        g.set_attribute("transform",
-                        &format!("translate({} {})", x * 10, y * 10))?;
-
-        Ok(g)
-    }
-
-    fn on_reject_button(&mut self, evt: Event) -> JsError {
+    fn on_undo_button(&mut self, evt: Event) -> JsError {
         // Don't allow for any tricky business here
         if self.state != BoardState::Idle {
             return Ok(());
         }
 
-        let drag = if !self.tentative.is_empty() {
-            let mut tiles = HashMap::new();
-            std::mem::swap(&mut self.tentative, &mut tiles);
-            // Take every active tile and free them from the tile grid,
-            // adjusting their transform so they don't move at all
-            for i in tiles.values() {
-                let t = &self.hand[*i].1;
-                self.pan_group.remove_child(t)?;
-                t.class_list().remove_1("invalid")?;
-                let (dx, dy) = Self::get_transform(t);
-                t.set_attribute(
-                    "transform", &format!("translate({} {})",
-                            dx - self.pan_offset.0,
-                            dy - self.pan_offset.1))?;
-                self.svg.append_child(t)?;
-            }
-            Some(DragAnim::ReturnAllToHand(ReturnAllToHand(
-                tiles.drain().map(|((tx, ty), i)|
-                    TileAnimation {
-                        target: self.hand[i].1.clone(),
-                        start: (tx as f32 * 10.0 + self.pan_offset.0,
-                                ty as f32 * 10.0 + self.pan_offset.1),
-                        end: ((i * 15 + 5) as f32, 185.0),
-                        t0: evt.time_stamp()
-                    }).collect())))
-        } else if !self.exchange_list.is_empty() {
-            let mut ex = Vec::new();
-            std::mem::swap(&mut ex, &mut self.exchange_list);
-            self.update_exchange_div(true)?;
-            Some(DragAnim::ReturnAllToHand(ReturnAllToHand(
-                ex.drain(0..)
-                    .map(|i| {
-                        let target = self.hand[i].1.clone();
-                        target.set_attribute("visibility", "visible")?;
-                        let x = (i * 15 + 5) as f32;
-                        Ok(TileAnimation {
-                            target,
-                            start: (x, 200.0),
-                            end:   (x, 185.0),
-                            t0: evt.time_stamp()
-                        })
-                    })
-                    .collect::<JsResult<Vec<TileAnimation>>>()?)))
-        } else {
-            None
-        };
+        let mut mov = None;
+        std::mem::swap(&mut mov, &mut self.mov);
 
-        if let Some(drag) = drag {
-            self.state = BoardState::Animation(drag);
-            self.request_animation_frame()?;
+        match mov {
+            Some(Move::Ball(mut jumps)) => {
+                let ball = jumps.pop().unwrap();
+                let prev_pos = *jumps.last().unwrap_or(&self.game.ball);
+                if !jumps.is_empty() {
+                    self.mov = Some(Move::Ball(jumps));
+                }
+                let t = self.grid.remove(&ball).unwrap();
+                self.pieces_group.remove_child(&t)?;
+                self.svg.append_child(&t)?;
+                let drag = DragAnim::ReturnBall(ReturnBall(
+                    TileAnimation {
+                        target: t,
+                        start: (ball.0 as f32 * 10.0,
+                                ball.1 as f32 * 10.0),
+                        end: (prev_pos.0 as f32 * 10.0,
+                              prev_pos.1 as f32 * 10.0),
+                        t0: evt.time_stamp()
+                    }
+                ));
+                self.state = BoardState::Animation(drag);
+                self.request_animation_frame()?;
+            },
+            Some(Move::Man(pos)) => {
+                self.pieces_group.remove_child(&self.grid.remove(&pos).unwrap())?;
+            },
+            _ => unreachable!(),
         }
+
+        if self.mov.is_none() {
+            self.accept_button.set_disabled(true);
+            self.undo_button.set_disabled(true);
+        }
+
         Ok(())
     }
 
@@ -936,132 +737,33 @@ impl Board {
      *  If the move is valid, returns the indexes of placed pieces
      *  (as hand indexes), which can be passed up to the server. */
     fn make_move(&mut self, _evt: Event) -> JsResult<Move> {
+        /*
         if self.state != BoardState::Idle {
             return Ok(Move::Place(Vec::new()));
         }
+         */
 
-        // Disable everything until we hear back from the server.
-        //
-        // If this is a one-player game, then it will be our turn again,
-        // but we'll let the server tell us that.
         self.accept_button.set_disabled(true);
-        self.reject_button.set_disabled(true);
+        self.undo_button.set_disabled(true);
 
         self.set_my_turn(false)?;
 
-        if !self.tentative.is_empty() {
-            Ok(Move::Place(self.tentative.iter()
-                .map(|((x, y), i)| (self.hand[*i].0, *x, *y))
-                .collect()))
-        } else {
-            assert!(!self.exchange_list.is_empty());
-            Ok(Move::Swap(self.exchange_list.iter()
-                .map(|i| self.hand[*i].0)
-                .collect()))
-        }
+        Ok(self.mov.as_ref().unwrap().clone())
     }
 
-    fn on_move_accepted(&mut self, dealt: &[Piece]) -> JsError {
-        let mut placed = HashMap::new();
-        for ((x, y), i) in self.tentative.drain() {
-            placed.insert(i, (x, y));
+    fn on_move_accepted(&mut self) {
+        let mut mov = None;
+        std::mem::swap(&mut mov, &mut self.mov);
+        match mov {
+            Some(Move::Ball(jumps)) => {
+                self.game.move_ball(jumps);
+            },
+            Some(Move::Man(pos)) => {
+                self.game.place_man(pos);
+            },
+            _ => unreachable!(),
         }
-        let mut exchanged = HashSet::new();
-        for i in self.exchange_list.drain(0..) {
-            exchanged.insert(i);
-        }
-
-        // We're going to shuffle pieces around now!
-        let mut prev_hand = Vec::new();
-        std::mem::swap(&mut prev_hand, &mut self.hand);
-        let mut anims = Vec::new();
-        let t0 = get_time_ms();
-        for (i, (piece, element)) in prev_hand.into_iter().enumerate() {
-            if let Some((x, y)) = placed.remove(&i) {
-                element.class_list().remove_1("piece")?;
-                element.class_list().add_1("placed")?;
-                element.remove_event_listener_with_callback(
-                    "pointerdown",
-                    self.pointer_down_cb.as_ref().unchecked_ref())?;
-                self.grid.insert((x, y), piece);
-            } else if exchanged.contains(&i) {
-                self.svg.remove_child(&element)?;
-            } else {
-                if self.hand.len() != i {
-                    anims.push(TileAnimation {
-                        target: element.clone(),
-                        start: (i as f32 * 15.0 + 5.0, 185.0),
-                        end: (self.hand.len() as f32 * 15.0 + 5.0, 185.0),
-                        t0 });
-                }
-                self.hand.push((piece, element));
-            }
-        }
-        for d in dealt {
-            let x = self.hand.len() as f32 * 15.0 + 5.0;
-            let target = self.add_hand(*d)?;
-            anims.push(TileAnimation {
-                target,
-                start: (x, 220.0),
-                end: (x, 185.0),
-                t0
-            })
-        }
-        self.state = BoardState::Animation(
-            DragAnim::ConsolidateHand(ConsolidateHand(anims)));
-        self.request_animation_frame()?;
-
-        Ok(())
     }
-
-    fn update_exchange_div(&mut self, my_turn: bool) -> JsError {
-        // Special case: if a new user joins while we've got pieces staged
-        // to swap, then it's possible that we won't have enough to swap,
-        // so we cancel the swap.
-        if self.pieces_remaining < self.exchange_list.len() {
-            // This will call update_exchange_div again, so we don't
-            // need to run any of the code below.
-            return self.on_reject_button(Event::new("dummy")?);
-        }
-
-        // If there are no pieces remaining, then the box is always disabled
-        if self.pieces_remaining == 0 {
-            self.exchange_div.set_inner_html("<p>No pieces<br>left in bag</p>");
-            self.exchange_div.class_list().add_1("disabled")?;
-            return Ok(());
-        }
-
-        // If it's not your turn, then we disable the box but leave the normal
-        // text (because we know that there are pieces remaining).
-        if !my_turn {
-            self.exchange_div.set_inner_html("<p>Drag here<br>to swap</p>");
-            self.exchange_div.class_list().add_1("disabled")?;
-            return Ok(());
-        }
-
-        // If it's our turn and there are pieces staged in the grid, then we
-        // disable the swapping box.
-        if !self.tentative.is_empty() {
-            self.exchange_div.set_inner_html("<p>Drag here<br>to swap</p>");
-            self.exchange_div.class_list().add_1("disabled")?;
-            return Ok(());
-        }
-
-        // Otherwise, the box is enabled and we have appropriate text
-        self.exchange_div.class_list().remove_1("disabled")?;
-        let n = self.exchange_list.len();
-        if n == 0 {
-            self.exchange_div.set_inner_html("<p>Drag here<br>to swap</p>");
-        } else {
-            self.exchange_div.set_inner_html(
-                &format!("<p>Swap {} piece{}{}</p>",
-                         n, if n > 1 { "s" } else { " " },
-                         if n == self.pieces_remaining { " (max)" }
-                         else { "" }));
-        }
-        Ok(())
-    }
-
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1109,9 +811,9 @@ struct Playing {
     chat_div: HtmlElement,
     chat_input: HtmlInputElement,
     score_table: HtmlElement,
-    player_index: usize,
-    active_player: usize,
-    player_names: Vec<String>,
+    your_side: Side,
+    active_side: Side,
+    opponent: Option<String>,
 
     board: Board,
 
@@ -1134,39 +836,32 @@ impl State {
             on_connected() -> CreateOrJoin,
         ],
         CreateOrJoin => [
-            on_joined_room(room_name: &str, players: &[(String, u32, bool)],
-                           active_player: usize,
-                           player_index: usize,
-                           board: &[((i32, i32), Piece)],
-                           pieces: &[Piece]) -> Playing,
+            on_joined_room(room_name: &str, opponent: &Option<String>,
+                           active_side: Side,
+                           your_side: Side,
+                           game: Game) -> Playing,
         ],
     );
 
     methods!(
         Playing => [
+            on_board_click(evt: MouseEvent),
+            on_board_hover(evt: PointerEvent),
             on_pointer_down(evt: PointerEvent),
             on_pointer_up(evt: PointerEvent),
             on_pointer_move(evt: PointerEvent),
-            on_pan_start(evt: PointerEvent),
-            on_pan_move(evt: PointerEvent),
-            on_pan_end(evt: Event),
             on_accept_button(evt: Event),
-            on_reject_button(evt: Event),
+            on_undo_button(evt: Event),
             on_anim(t: f64),
             on_send_chat(),
             on_chat(from: &str, msg: &str),
             on_information(msg: &str),
-            on_new_player(name: &str),
-            on_player_disconnected(index: usize),
-            on_player_reconnected(index: usize),
-            on_player_turn(active_player: usize),
-            on_played(pieces: &[(Piece, i32, i32)]),
-            on_swapped(count: usize),
-            on_move_accepted(dealt: &[Piece]),
+            on_opponent_joined(name: &str),
+            on_opponent_disconnected(),
+            on_opponent_moved(mov: Move),
+            on_move_accepted(),
             on_move_rejected(),
-            on_pieces_remaining(remaining: usize),
-            on_player_score(delta: u32, total: u32),
-            on_finished(winner: usize),
+            on_finished(winner: Side),
         ],
         CreateOrJoin => [
             on_room_name_invalid(),
@@ -1288,10 +983,9 @@ impl CreateOrJoin {
         Ok(())
     }
 
-    fn on_joined_room(self, room_name: &str, players: &[(String, u32, bool)],
-                      active_player: usize, player_index: usize,
-                      board: &[((i32, i32), Piece)],
-                      pieces: &[Piece]) -> JsResult<Playing>
+    fn on_joined_room(self, room_name: &str, opponent: &Option<String>,
+                      active_side: Side, your_side: Side,
+                      game: Game) -> JsResult<Playing>
     {
         self.base.doc.get_element_by_id("join")
             .expect("Could not get join div")
@@ -1302,11 +996,11 @@ impl CreateOrJoin {
             .dyn_into::<HtmlElement>()?
             .set_hidden(false);
 
-        let mut p = Playing::new(self.base, room_name, players,
-                                 active_player, player_index,
-                                 board, pieces)?;
-        p.on_information(&format!("Welcome, {}!", players[player_index].0))?;
-        p.on_player_turn(active_player)?;
+        let player_name = self.name_input.value();
+        let p = Playing::new(self.base, room_name, player_name.clone(), opponent,
+                                 active_side, your_side,
+                                 game)?;
+        p.on_information(&format!("Welcome, {}!", player_name))?;
         Ok(p)
     }
 
@@ -1348,10 +1042,9 @@ impl CreateOrJoin {
 ////////////////////////////////////////////////////////////////////////////////
 
 impl Playing {
-    fn new(base: Base, room_name: &str, players: &[(String, u32, bool)],
-           active_player: usize, player_index: usize,
-           in_board: &[((i32, i32), Piece)],
-           pieces: &[Piece]) -> JsResult<Playing>
+    fn new(base: Base, room_name: &str, player_name: String, opponent: &Option<String>,
+           active_side: Side, your_side: Side,
+           game: Game) -> JsResult<Playing>
     {
         // The title lists the room name
         let s: HtmlElement = base.doc.get_element_by_id("room_name")
@@ -1359,11 +1052,15 @@ impl Playing {
             .dyn_into()?;
         s.set_text_content(Some(&room_name));
 
-        let board = Board::new(&base.doc)?;
+        let mut board = Board::new(&base.doc, game)?;
+
+        if active_side != your_side {
+            board.set_my_turn(false);
+        }
 
         let b = base.doc.get_element_by_id("chat_name")
             .expect("Could not get chat_name");
-        b.set_text_content(Some(&format!("{}:", players[player_index].0)));
+        b.set_text_content(Some(&format!("{}:", player_name)));
 
         // If Enter is pressed while focus is in the chat box,
         // send a chat message to the server.
@@ -1394,29 +1091,18 @@ impl Playing {
             chat_input,
             chat_div,
             score_table,
-            player_index,
-            active_player,
-            player_names: Vec::new(),
+            your_side,
+            active_side,
+            opponent: opponent.clone(),
 
             _keyup_cb: keyup_cb,
         };
 
-        for ((x, y), p) in in_board.iter() {
-            out.board.add_piece(*p, *x, *y)?;
-        }
-        for p in pieces.iter() {
-            out.board.add_hand(*p)?;
-        }
+        out.add_player_row("".to_string());
+        out.add_player_row("".to_string());
+        out.change_player_name(your_side, &format!("{} (you)", player_name));
+        out.change_player_name(your_side.opposite(), opponent.as_deref().unwrap_or(""));
 
-        for (i, (name, score, connected)) in players.iter().enumerate() {
-            out.add_player_row(
-                if i == player_index {
-                    format!("{} (you)", name)
-                } else {
-                    name.to_string()
-                },
-                *score as usize, *connected)?;
-        }
         Ok(out)
     }
 
@@ -1453,9 +1139,24 @@ impl Playing {
         Ok(())
     }
 
-    fn add_player_row(&mut self, name: String, score: usize, connected: bool)
-        -> JsError
-    {
+    fn row(side: Side) -> u32 {
+        match side {
+            Side::Top => 0,
+            Side::Bottom => 1,
+        }
+    }
+
+    fn change_player_name(&mut self, side: Side, name: &str) {
+        self.score_table.child_nodes()
+            .item(Self::row(side) + 3)
+            .expect("Could not get table row")
+            .child_nodes()
+            .item(1)
+            .expect("Could not get score value")
+            .set_text_content(Some(name));
+    }
+
+    fn add_player_row(&mut self, name: String) -> JsError {
         let tr = self.base.doc.create_element("tr")?;
         tr.set_class_name("player-row");
 
@@ -1470,15 +1171,10 @@ impl Playing {
         tr.append_child(&td)?;
 
         let td = self.base.doc.create_element("td")?;
-        td.set_text_content(Some(&score.to_string()));
+        td.set_text_content(Some(""));
         tr.append_child(&td)?;
 
-        if !connected {
-            tr.class_list().add_1("disconnected")?;
-        }
-
         self.score_table.append_child(&tr)?;
-        self.player_names.push(name);
 
         Ok(())
     }
@@ -1493,76 +1189,37 @@ impl Playing {
         }
     }
 
-    fn on_new_player(&mut self, name: &str) -> JsError {
-        // Append a player to the bottom of the scores list
-        self.add_player_row(name.to_string(), 0, true)?;
+    fn on_opponent_joined(&mut self, name: &str) -> JsError {
+        self.change_player_name(self.your_side.opposite(), name);
+        let c = self.score_table.child_nodes()
+            .item(Self::row(self.your_side.opposite()) + 3)
+            .unwrap()
+            .dyn_into::<HtmlElement>()?;
+        c.class_list().remove_1("disconnected")?;
         self.on_information(&format!("{} joined the room", name))
     }
 
-    fn on_player_disconnected(&self, index: usize) -> JsError {
+    fn on_opponent_disconnected(&mut self) -> JsError {
+        self.change_player_name(self.your_side.opposite(), "");
         let c = self.score_table.child_nodes()
-            .item((index + 3) as u32)
+            .item(Self::row(self.your_side.opposite()) + 3)
             .unwrap()
             .dyn_into::<HtmlElement>()?;
         c.class_list().add_1("disconnected")?;
         self.on_information(&format!("{} disconnected",
-                                     self.player_names[index]))
-    }
-
-    fn on_player_reconnected(&self, index: usize) -> JsError {
-        let c = self.score_table.child_nodes()
-            .item((index + 3) as u32)
-            .unwrap()
-            .dyn_into::<HtmlElement>()?;
-        c.class_list().remove_1("disconnected")?;
-        self.on_information(&format!("{} reconnected",
-                                     self.player_names[index]))
-    }
-
-    fn on_player_turn(&mut self, active_player: usize)
-        -> JsError
-    {
-        let children = self.score_table.child_nodes();
-        children
-            .item((self.active_player + 3) as u32)
-            .unwrap()
-            .dyn_into::<HtmlElement>()?
-            .class_list()
-            .remove_1("active")?;
-
-        self.active_player = active_player;
-        children
-            .item((self.active_player + 3) as u32)
-            .unwrap()
-            .dyn_into::<HtmlElement>()?
-            .class_list()
-            .add_1("active")?;
-
-        if self.active_player == self.player_index {
-            self.on_information("It's your turn!")
-        } else {
-            self.on_information(
-                &format!("It's {}'s turn!",
-                         self.player_names[self.active_player]))
-        }?;
-
-        self.board.set_my_turn(active_player == self.player_index)
+                                     self.opponent.as_ref().unwrap()))
     }
 
     fn on_anim(&mut self, t: f64) -> JsError {
         self.board.on_anim(t)
     }
 
-    fn on_pan_start(&mut self, evt: PointerEvent) -> JsError {
-        self.board.on_pan_start(evt)
+    fn on_board_click(&mut self, evt: MouseEvent) -> JsError {
+        self.board.on_board_click(evt)
     }
 
-    fn on_pan_move(&mut self, evt: PointerEvent) -> JsError {
-        self.board.on_pan_move(evt)
-    }
-
-    fn on_pan_end(&mut self, evt: Event) -> JsError {
-        self.board.on_pan_end(evt)
+    fn on_board_hover(&mut self, evt: PointerEvent) -> JsError {
+        self.board.on_board_hover(evt)
     }
 
     fn on_pointer_down(&mut self, evt: PointerEvent) -> JsError {
@@ -1577,96 +1234,78 @@ impl Playing {
         self.board.on_pointer_up(evt)
     }
 
-    fn on_reject_button(&mut self, evt: Event) -> JsError {
-        self.board.on_reject_button(evt)
+    fn on_undo_button(&mut self, evt: Event) -> JsError {
+        self.board.on_undo_button(evt)
     }
 
     fn on_accept_button(&mut self, evt: Event) -> JsError {
-        match self.board.make_move(evt)? {
-            Move::Place(m) => self.base.send(ClientMessage::Play(m)),
-            Move::Swap(m) => self.base.send(ClientMessage::Swap(m)),
-        }
+        self.base.send(ClientMessage::Move(self.board.make_move(evt)?))
     }
 
-    fn on_played(&mut self, pieces: &[(Piece, i32, i32)]) -> JsError {
-        let mut anims = Vec::new();
-        let t0 = get_time_ms();
-        for (piece, x, y) in pieces {
-            let target = self.board.add_piece(*piece, *x, *y)?;
-            anims.push(TileAnimation {
-                target,
-                start: (225.0, *y as f32 * 10.0),
-                end: (*x as f32 * 10.0, *y as f32 * 10.0),
-                t0 });
+    fn on_opponent_moved(&mut self, mov: Move) -> JsError {
+        match mov {
+            Move::Ball(jumps) => {
+                let mut anims = Vec::new();
+                let mut start_pos = self.board.game.ball;
+                let ball = self.board.grid.remove(&start_pos).unwrap();
+                let t0 = get_time_ms();
+                self.board.pieces_group.remove_child(&ball)?;
+                self.board.svg.append_child(&ball)?;
+                for &jump in &jumps {
+                    anims.push(TileAnimation {
+                        target: ball.clone(),
+                        start: (start_pos.0 as f32 * 10.0, start_pos.1 as f32 * 10.0),
+                        end: (jump.0 as f32 * 10.0, jump.1 as f32 * 10.0),
+                        t0,
+                    });
+                    start_pos = jump;
+                }
+                self.board.grid.insert(start_pos, ball);
+                self.board.state = BoardState::Animation(DragAnim::JumpBall(JumpBall(anims)));
+                self.board.request_animation_frame()?;
+
+                for remove_man in self.board.game.move_ball(jumps).unwrap() {
+                    self.board.pieces_group.remove_child(&self.board.grid.remove(&remove_man).unwrap())?;
+                }
+            }
+            Move::Man(pos) => {
+                let man = self.board.new_man()?;
+                self.board.pieces_group.append_child(&man)?;
+                man.class_list().add_1("placed")?;
+                man.set_attribute("transform",
+                                &format!("translate({} {})", pos.0 * 10, pos.1 * 10))?;
+                self.board.grid.insert(pos, man);
+                self.board.game.place_man(pos);
+            }
         }
-        // If we're panning, we need to cancel the pan state before starting
-        // an animation, otherwise a mouse-up will mess things up.
-        if let BoardState::Panning(_) = &self.board.state {
-            self.board.on_pan_end(Event::new("CancelPan")?)?;
-        }
-        self.board.state = BoardState::Animation(DragAnim::DropManyToGrid(DropManyToGrid(anims)));
-        self.board.request_animation_frame()?;
+        self.board.set_my_turn(true)
+    }
+
+    fn on_move_accepted(&mut self) -> JsError {
+        self.board.on_move_accepted();
         Ok(())
-    }
-
-    fn active_player_name(&self) -> &str {
-        if self.active_player == self.player_index {
-            "You"
-        } else {
-            &self.player_names[self.active_player]
-        }
-    }
-
-    fn on_swapped(&mut self, count: usize) -> JsError {
-        self.on_information(&format!("{} swapped {} piece{}",
-            self.active_player_name(), count,
-            if count > 1 { "s" } else { "" }))
-    }
-
-    fn on_move_accepted(&mut self, dealt: &[Piece]) -> JsError {
-        self.board.on_move_accepted(dealt)
     }
 
     fn on_move_rejected(&mut self) -> JsError {
         Ok(())
     }
 
-    fn on_player_score(&mut self, delta: u32, total: u32) -> JsError {
-        self.score_table.child_nodes()
-            .item(self.active_player as u32 + 3)
-            .expect("Could not get table row")
-            .child_nodes()
-            .item(2)
-            .expect("Could not get score value")
-            .set_text_content(Some(&total.to_string()));
-        self.on_information(&format!("{} scored {} point{}",
-            self.active_player_name(),
-            delta,
-            if delta == 1 { "" } else { "s" }))
-    }
-
-    fn on_finished(&mut self, winner: usize) -> JsError {
+    fn on_finished(&mut self, winner: Side) -> JsError {
         self.board.set_my_turn(false)?;
 
         let children = self.score_table.child_nodes();
         children
-            .item((self.active_player + 3) as u32)
+            .item(Self::row(self.active_side) + 3)
             .unwrap()
             .dyn_into::<HtmlElement>()?
             .class_list()
             .remove_1("active")?;
 
-        if winner == self.player_index {
+        if winner == self.your_side {
             self.on_information("You win!")
         } else {
-            self.on_information(&format!("{} wins!",
-                self.player_names[winner]))
+            self.on_information("You lost!")
         }
-    }
-
-    fn on_pieces_remaining(&mut self, remaining: usize) -> JsError {
-        self.board.pieces_remaining = remaining;
-        self.board.update_exchange_div(self.active_player == self.player_index)
     }
 }
 
@@ -1681,23 +1320,17 @@ fn on_message(msg: ServerMessage) -> JsError {
 
     match msg {
         JoinFailed(name) => state.on_join_failed(&name),
-        JoinedRoom{room_name, players, active_player, player_index, board, pieces} =>
-            state.on_joined_room(&room_name, &players,
-                                 active_player, player_index,
-                                 &board, &pieces),
+        JoinedRoom{room_name, opponent, active_side, your_side, game} =>
+            state.on_joined_room(&room_name, &opponent,
+                                 active_side, your_side,
+                                 game),
         Chat{from, message} => state.on_chat(&from, &message),
         Information(message) => state.on_information(&message),
-        NewPlayer(name) => state.on_new_player(&name),
-        PlayerDisconnected(index) => state.on_player_disconnected(index),
-        PlayerReconnected(index) => state.on_player_reconnected(index),
-        PlayerTurn(active_player) => state.on_player_turn(active_player),
-        PiecesRemaining(remaining) => state.on_pieces_remaining(remaining),
-        Played(pieces) => state.on_played(&pieces),
-        Swapped(count) => state.on_swapped(count),
-        MoveAccepted(dealt) => state.on_move_accepted(&dealt),
+        OpponentJoined(name) => state.on_opponent_joined(&name),
+        OpponentDisconnected => state.on_opponent_disconnected(),
+        OpponentMoved(mov) => state.on_opponent_moved(mov),
+        MoveAccepted => state.on_move_accepted(),
         MoveRejected => state.on_move_rejected(),
-        PlayerScore{delta, total} =>
-            state.on_player_score(delta, total),
         ItsOver(winner) => state.on_finished(winner),
     }
 }
