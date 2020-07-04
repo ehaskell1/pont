@@ -183,7 +183,7 @@ rect.shadow {
     stroke-width: 0.5;
     stroke: var(--light2);
 }
-rect#pan_rect {
+rect#board_rect {
     fill: none;
     pointer-events: all;
 }
@@ -226,7 +226,7 @@ button.gameplay:disabled {
     background-color: var(--light1);
     pointer-events: none;
 }
-button#reject_button {
+button#undo_button {
     left: 100%;
     top: 100%;
     transform: translateY(-100%) translateX(-100%);

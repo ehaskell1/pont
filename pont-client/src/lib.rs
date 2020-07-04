@@ -651,6 +651,8 @@ impl Board {
             g.append_child(&corner)?;
         }
 
+        element.class_list().add_1("placed")?;
+
         Ok(g)
     }
 
@@ -683,6 +685,8 @@ impl Board {
             corner.class_list().add_1("color")?;
             g.append_child(&corner)?;
         }
+
+        element.class_list().add_1("piece")?;
 
         Ok(g)
     }
