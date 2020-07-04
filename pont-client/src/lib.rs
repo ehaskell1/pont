@@ -651,7 +651,7 @@ impl Board {
             g.append_child(&corner)?;
         }
 
-        element.class_list().add_1("placed")?;
+        g.class_list().add_1("placed")?;
 
         Ok(g)
     }
@@ -686,7 +686,7 @@ impl Board {
             g.append_child(&corner)?;
         }
 
-        element.class_list().add_1("piece")?;
+        g.class_list().add_1("piece")?;
 
         Ok(g)
     }
