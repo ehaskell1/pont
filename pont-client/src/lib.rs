@@ -262,20 +262,8 @@ impl Board {
 
         let ball = out.new_ball()?;
         out.pieces_group.append_child(&ball)?;
-        ball.class_list().add_1("placed")?;
         ball.set_attribute("transform",
                           &format!("translate({} {})", out.game.ball.0 * 10, out.game.ball.1 * 10))?;
-
-        let mut options = AddEventListenerOptions::new();
-        options.passive(false);
-        ball.add_event_listener_with_callback_and_add_event_listener_options(
-            "pointerdown",
-            out.pointer_down_cb.as_ref().unchecked_ref(),
-            &options)?;
-        ball.add_event_listener_with_callback_and_add_event_listener_options(
-            "touchstart",
-            out.touch_start_cb.as_ref().unchecked_ref(),
-            &options)?;
 
         out.grid.insert(out.game.ball, ball);
 
@@ -734,9 +722,7 @@ impl Board {
         Ok(())
     }
 
-    /*  Attempts to make the given move.
-     *  If the move is valid, returns the indexes of placed pieces
-     *  (as hand indexes), which can be passed up to the server. */
+    /*  Attempts to make the given move. */
     fn make_move(&mut self, _evt: Event) -> JsResult<Move> {
         /*
         if self.state != BoardState::Idle {
