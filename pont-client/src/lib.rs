@@ -278,6 +278,32 @@ impl Board {
             .expect("Could not find svg div");
         let pieces_group = doc.get_element_by_id("pieces_group")
             .expect("Could not find pieces_group");
+        let grid_lines = doc.get_element_by_id("grid_lines")
+            .expect("Could nto find grid_lines");
+
+
+        for y in 0..HEIGHT {
+            let g = doc.create_svg_element("line")?;
+            g.set_attribute("x1", "5")?;
+            g.set_attribute("x2", "145")?;
+            let y = (5 + y * 10).to_string();
+            g.set_attribute("y1", &y)?;
+            g.set_attribute("y2", &y)?;
+            g.set_attribute("stroke", "black")?;
+            g.set_attribute("stroke-width", "0.25px")?;
+            grid_lines.append_child(&g)?;
+        }
+        for x in 0..WIDTH {
+            let g = doc.create_svg_element("line")?;
+            g.set_attribute("y1", "5")?;
+            g.set_attribute("y2", "205")?;
+            let x = (5 + x * 10).to_string();
+            g.set_attribute("x1", &x)?;
+            g.set_attribute("x2", &x)?;
+            g.set_attribute("stroke", "black")?;
+            g.set_attribute("stroke-width", "0.25px")?;
+            grid_lines.append_child(&g)?;
+        }
 
         let mut out = Board {
             doc: doc.clone(),
@@ -367,7 +393,6 @@ impl Board {
         }
         let man = self.new_man()?;
         self.pieces_group.append_child(&man)?;
-        man.class_list().add_1("piece")?;
         man.set_attribute("transform",
                           &format!("translate({} {})", x * 10, y * 10))?;
         self.grid.insert(position, man);
@@ -673,7 +698,7 @@ impl Board {
             g.append_child(&corner)?;
         }
 
-        g.class_list().add_1("placed")?;
+        g.class_list().add_1("piece")?;
 
         Ok(g)
     }
