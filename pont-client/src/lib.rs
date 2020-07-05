@@ -1245,10 +1245,12 @@ impl Playing {
     }
 
     fn on_undo_button(&mut self, evt: Event) -> JsError {
+        console_log!("Undo button pressed");
         self.board.on_undo_button(evt)
     }
 
     fn on_accept_button(&mut self, evt: Event) -> JsError {
+        console_log!("Accept button pressed");
         self.base.send(ClientMessage::Move(self.board.make_move(evt)?))
     }
 
