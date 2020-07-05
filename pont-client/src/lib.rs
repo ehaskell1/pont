@@ -133,18 +133,22 @@ impl JumpBall {
     // Returns true if the animation should keep running
     fn run(&self, t: f64) -> JsResult<bool> {
         let anim_length = 100.0;
-        let mut frac = ((t - self.t0) / anim_length) as f32;
-        if frac > (self.points.len() - 1) as f32 {
-            frac = (self.points.len() - 1) as f32;
+        let frac = ((t - self.t0) / anim_length) as f32;
+        let q = frac as usize;
+        if q >= self.points.len() - 1 {
+            let last = *self.points.last().unwrap();
+            self.target.set_attribute("transform", &format!("translate({} {})", last.0, last.1))?;
+            Ok(false)
+        } else {
+            let start = self.points[q];
+            let end = self.points[q + 1];
+            let rem = frac - q as f32;
+            let x = start.0 * (1.0 - rem) + end.0 * rem;
+            let y = start.1 * (1.0 - rem) + end.1 * rem;
+            self.target.set_attribute("transform", &format!("translate({} {})",
+                                                            x, y))?;
+            Ok(true)
         }
-        let start = self.points[frac as usize];
-        let end = self.points[frac as usize + 1];
-        let rem = frac - frac as usize as f32;
-        let x = start.0 * (1.0 - rem) + end.0 * rem;
-        let y = start.1 * (1.0 - rem) + end.1 * rem;
-        self.target.set_attribute("transform", &format!("translate({} {})",
-                                                        x, y))?;
-        Ok(frac < (self.points.len() - 1) as f32)
     }
 }
 
