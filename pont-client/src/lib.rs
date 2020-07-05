@@ -133,6 +133,7 @@ impl TileAnimation {
 struct DropBall {
     anim: TileAnimation,
     shadow: Element,
+    remove_men: Vec<Position>,
 }
 
 #[derive(PartialEq)]
@@ -141,10 +142,17 @@ struct ReturnBall(TileAnimation);
 struct JumpBall(Vec<TileAnimation>);
 
 #[derive(PartialEq)]
+struct UndoBall {
+    anim: TileAnimation,
+    add_men: Vec<Position>,
+}
+
+#[derive(PartialEq)]
 enum DragAnim {
     DropBall(DropBall),
     ReturnBall(ReturnBall),
     JumpBall(JumpBall),
+    UndoBall(UndoBall),
 }
 
 #[derive(PartialEq)]
@@ -168,9 +176,9 @@ pub struct Board {
 
     pieces_group: Element,
 
-    game: Game,
     mov: Option<Move>,
     grid: HashMap<Position, Element>,
+    game_states: Vec<Game>,
 
     accept_button: HtmlButtonElement,
     undo_button: HtmlButtonElement,
@@ -256,20 +264,20 @@ impl Board {
             anim_cb,
             accept_button,
             undo_button,
-            game,
+            game_states: vec![game],
             grid: HashMap::new(),
         };
 
         let ball = out.new_ball()?;
         out.pieces_group.append_child(&ball)?;
         ball.set_attribute("transform",
-                          &format!("translate({} {})", out.game.ball.0 * 10, out.game.ball.1 * 10))?;
+                          &format!("translate({} {})", out.game_states[0].ball.0 * 10, out.game_states[0].ball.1 * 10))?;
 
-        out.grid.insert(out.game.ball, ball);
+        out.grid.insert(out.game_states.last().unwrap().ball, ball);
 
         for x in 0..WIDTH {
             for y in 0..HEIGHT {
-                if let PositionState::Man = out.game.board[x as usize][y as usize] {
+                if let PositionState::Man = out.game_states[0].board[x as usize][y as usize] {
                     let man = out.new_man()?;
                     out.pieces_group.append_child(&man)?;
                     man.class_list().add_1("placed")?;
@@ -337,6 +345,9 @@ impl Board {
         self.grid.insert(position, man);
 
         self.mov = Some(Move::Man(position));
+        let mut game = self.game_states.last().unwrap().clone();
+        game.place_man(position);
+        self.game_states.push(game);
 
         self.accept_button.set_disabled(false);
         self.undo_button.set_disabled(false);
@@ -443,17 +454,7 @@ impl Board {
             let tx = (x / 10.0).round() as u8;
             let ty = (y / 10.0).round() as u8;
 
-            let jumps =
-                match &self.mov {
-                    Some(Move::Ball(jumps)) => {
-                        let mut jumps = jumps.clone();
-                        jumps.push((tx, ty));
-                        jumps
-                    }
-                    None => vec![(tx, ty)],
-                    _ => unreachable!(),
-                };
-            if self.game.clone().move_ball(jumps).is_some() {
+            if self.game_states.last().unwrap().clone().move_ball(vec![(tx, ty)]).is_some() {
                 return Ok((pos, DropTarget::DropBall((tx, ty))));
             }
 
@@ -503,12 +504,13 @@ impl Board {
             let drag_anim = match drop_target {
                 DropTarget::ReturnBall => {
                     self.pieces_group.remove_child(&d.shadow)?;
-                    self.grid.insert(self.game.ball, d.target.clone());
+                    let game = self.game_states.last().unwrap();
+                    self.grid.insert(game.ball, d.target.clone());
                     DragAnim::ReturnBall(ReturnBall(
                         TileAnimation {
                             target: d.target.clone(),
                             start: pos,
-                            end: (self.game.ball.0 as f32 * 10.0, self.game.ball.1 as f32 * 10.0),
+                            end: (game.ball.0 as f32 * 10.0, game.ball.1 as f32 * 10.0),
                             t0: evt.time_stamp()
                         }))
                 },
@@ -522,6 +524,9 @@ impl Board {
                         unreachable!();
                     }
                     self.grid.insert((gx, gy), d.target.clone());
+                    let mut game = self.game_states.last().unwrap().clone();
+                    let remove_men = game.move_ball(vec![(gx, gy)]).unwrap();
+                    self.game_states.push(game);
                     let target = d.target.clone();
                     DragAnim::DropBall(DropBall {
                         anim: TileAnimation {
@@ -531,6 +536,7 @@ impl Board {
                             t0: evt.time_stamp(),
                         },
                         shadow: d.shadow.clone(),
+                        remove_men,
                     })
                 },
             };
@@ -544,10 +550,36 @@ impl Board {
     fn on_anim(&mut self, t: f64) -> JsError {
         if let BoardState::Animation(drag) = &self.state {
             match drag {
+                DragAnim::UndoBall(d) => {
+                    if d.anim.run(t)? {
+                        self.request_animation_frame()?;
+                    } else {
+                        for &(x, y) in &d.add_men {
+                            let man = self.new_man()?;
+                            self.pieces_group.append_child(&man)?;
+                            man.set_attribute("transform",
+                                              &format!("translate({} {})", x * 10, y * 10))?;
+                            self.grid.insert((x, y), man);
+                        }
+                        self.svg.remove_child(&d.anim.target)?;
+                        self.pieces_group.append_child(&d.anim.target)?;
+                        self.state = BoardState::Idle;
+                        if self.mov.is_some() {
+                            self.accept_button.set_disabled(false);
+                            self.accept_button.set_disabled(false);
+                        } else {
+                            self.accept_button.set_disabled(true);
+                            self.undo_button.set_disabled(true);
+                        }
+                    }
+                }
                 DragAnim::DropBall(d) => {
                     if d.anim.run(t)? {
                         self.request_animation_frame()?;
                     } else {
+                        for pos in &d.remove_men {
+                            self.pieces_group.remove_child(&self.grid.remove(pos).unwrap())?;
+                        }
                         self.pieces_group.remove_child(&d.shadow)?;
                         self.svg.remove_child(&d.anim.target)?;
                         self.pieces_group.append_child(&d.anim.target)?;
@@ -688,27 +720,29 @@ impl Board {
 
         let mut mov = None;
         std::mem::swap(&mut mov, &mut self.mov);
+        let game = self.game_states.pop().unwrap();
 
         match mov {
             Some(Move::Ball(mut jumps)) => {
-                let ball = jumps.pop().unwrap();
-                let prev_pos = *jumps.last().unwrap_or(&self.game.ball);
+                jumps.pop();
                 if !jumps.is_empty() {
                     self.mov = Some(Move::Ball(jumps));
                 }
-                let t = self.grid.remove(&ball).unwrap();
+                let mut prev_game = self.game_states.last().unwrap().clone();
+                let t = self.grid.remove(&game.ball).unwrap();
                 self.pieces_group.remove_child(&t)?;
                 self.svg.append_child(&t)?;
-                let drag = DragAnim::ReturnBall(ReturnBall(
-                    TileAnimation {
+                let drag = DragAnim::UndoBall(UndoBall {
+                    anim: TileAnimation {
                         target: t,
-                        start: (ball.0 as f32 * 10.0,
-                                ball.1 as f32 * 10.0),
-                        end: (prev_pos.0 as f32 * 10.0,
-                              prev_pos.1 as f32 * 10.0),
+                        start: (game.ball.0 as f32 * 10.0,
+                                game.ball.1 as f32 * 10.0),
+                        end: (prev_game.ball.0 as f32 * 10.0,
+                              prev_game.ball.1 as f32 * 10.0),
                         t0: evt.time_stamp()
-                    }
-                ));
+                    },
+                    add_men: prev_game.move_ball(vec![game.ball]).unwrap(),
+                });
                 self.state = BoardState::Animation(drag);
                 self.request_animation_frame()?;
             },
@@ -718,10 +752,8 @@ impl Board {
             _ => unreachable!(),
         }
 
-        if self.mov.is_none() {
-            self.accept_button.set_disabled(true);
-            self.undo_button.set_disabled(true);
-        }
+        self.accept_button.set_disabled(true);
+        self.undo_button.set_disabled(true);
 
         Ok(())
     }
@@ -743,17 +775,8 @@ impl Board {
     }
 
     fn on_move_accepted(&mut self) {
-        let mut mov = None;
-        std::mem::swap(&mut mov, &mut self.mov);
-        match mov {
-            Some(Move::Ball(jumps)) => {
-                self.game.move_ball(jumps);
-            },
-            Some(Move::Man(pos)) => {
-                self.game.place_man(pos);
-            },
-            _ => unreachable!(),
-        }
+        self.mov = None;
+        self.game_states = vec![self.game_states.pop().unwrap()];
     }
 }
 
@@ -1241,7 +1264,7 @@ impl Playing {
         match mov {
             Move::Ball(jumps) => {
                 let mut anims = Vec::new();
-                let mut start_pos = self.board.game.ball;
+                let mut start_pos = self.board.game_states.last().unwrap().ball;
                 let ball = self.board.grid.remove(&start_pos).unwrap();
                 let t0 = get_time_ms();
                 self.board.pieces_group.remove_child(&ball)?;
@@ -1259,7 +1282,7 @@ impl Playing {
                 self.board.state = BoardState::Animation(DragAnim::JumpBall(JumpBall(anims)));
                 self.board.request_animation_frame()?;
 
-                for remove_man in self.board.game.move_ball(jumps).unwrap() {
+                for remove_man in self.board.game_states.last_mut().unwrap().move_ball(jumps).unwrap() {
                     self.board.pieces_group.remove_child(&self.board.grid.remove(&remove_man).unwrap())?;
                 }
             }
@@ -1269,7 +1292,7 @@ impl Playing {
                 man.set_attribute("transform",
                                 &format!("translate({} {})", pos.0 * 10, pos.1 * 10))?;
                 self.board.grid.insert(pos, man);
-                self.board.game.place_man(pos);
+                self.board.game_states.last_mut().unwrap().place_man(pos);
             }
         }
         self.board.set_my_turn(true)
