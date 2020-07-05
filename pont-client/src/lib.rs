@@ -129,6 +129,25 @@ impl TileAnimation {
     }
 }
 
+impl JumpBall {
+    // Returns true if the animation should keep running
+    fn run(&self, t: f64) -> JsResult<bool> {
+        let anim_length = 100.0;
+        let mut frac = ((t - self.t0) / anim_length) as f32;
+        if frac > (self.points.len() - 1) as f32 {
+            frac = (self.points.len() - 1) as f32;
+        }
+        let start = self.points[frac as usize];
+        let end = self.points[frac as usize + 1];
+        let rem = frac - frac as usize as f32;
+        let x = start.0 * (1.0 - rem) + end.0 * rem;
+        let y = start.1 * (1.0 - rem) + end.1 * rem;
+        self.target.set_attribute("transform", &format!("translate({} {})",
+                                                        x, y))?;
+        Ok(frac < (self.points.len() - 1) as f32)
+    }
+}
+
 #[derive(PartialEq)]
 struct DropBall {
     anim: TileAnimation,
@@ -138,8 +157,13 @@ struct DropBall {
 
 #[derive(PartialEq)]
 struct ReturnBall(TileAnimation);
+
 #[derive(PartialEq)]
-struct JumpBall(Vec<TileAnimation>);
+struct JumpBall {
+    target: Element,
+    points: Vec<Pos>,
+    t0: f64,
+}
 
 #[derive(PartialEq)]
 struct UndoBall {
@@ -593,18 +617,13 @@ impl Board {
                         self.state = BoardState::Idle;
                     }
                 },
-                DragAnim::JumpBall(JumpBall(jumps)) => {
-                    let mut target = None;
-                    if jumps.first().unwrap().run(t)? {
-                        target = Some(jumps.remove(0).target);
-                    }
-                    if jumps.is_empty() {
-                        let target = target.unwrap();
-                        self.svg.remove_child(&target)?;
-                        self.pieces_group.append_child(&target)?;
-                        self.state = BoardState::Idle;
-                    } else {
+                DragAnim::JumpBall(j) => {
+                    if j.run(t)? {
                         self.request_animation_frame()?;
+                    } else {
+                        self.svg.remove_child(&j.target)?;
+                        self.pieces_group.append_child(&j.target)?;
+                        self.state = BoardState::Idle;
                     }
                 }
             }
@@ -1261,23 +1280,19 @@ impl Playing {
     fn on_opponent_moved(&mut self, mov: Move) -> JsError {
         match mov {
             Move::Ball(jumps) => {
-                let mut anims = Vec::new();
-                let mut start_pos = self.board.game_states.last().unwrap().ball;
+                let start_pos = self.board.game_states.last().unwrap().ball;
                 let ball = self.board.grid.remove(&start_pos).unwrap();
                 let t0 = get_time_ms();
                 self.board.pieces_group.remove_child(&ball)?;
                 self.board.svg.append_child(&ball)?;
-                for &jump in &jumps {
-                    anims.push(TileAnimation {
-                        target: ball.clone(),
-                        start: (start_pos.0 as f32 * 10.0, start_pos.1 as f32 * 10.0),
-                        end: (jump.0 as f32 * 10.0, jump.1 as f32 * 10.0),
-                        t0,
-                    });
-                    start_pos = jump;
-                }
-                self.board.grid.insert(start_pos, ball);
-                self.board.state = BoardState::Animation(DragAnim::JumpBall(JumpBall(anims)));
+                self.board.grid.insert(*jumps.last().unwrap(), ball.clone());
+                self.board.state = BoardState::Animation(DragAnim::JumpBall(JumpBall {
+                    target: ball,
+                    points: std::iter::once((start_pos.0 as f32 * 10.0, start_pos.1 as f32 * 10.0))
+                        .chain(jumps.iter().map(|pos| (pos.0 as f32 * 10.0, pos.1 as f32 * 10.0)))
+                        .collect(),
+                    t0,
+                }));
                 self.board.request_animation_frame()?;
 
                 for remove_man in self.board.game_states.last_mut().unwrap().move_ball(jumps).unwrap() {
