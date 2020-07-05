@@ -199,6 +199,7 @@ pub struct Board {
     doc: Document,
     svg: SvgGraphicsElement,
     svg_div: Element,
+    man_shadow: Element,
 
     state: BoardState,
 
@@ -282,6 +283,14 @@ impl Board {
             .expect("Could nto find grid_lines");
 
 
+        let man_shadow = doc.create_svg_element("circle")?;
+        man_shadow.class_list().add_1("man_shadow")?;
+        man_shadow.set_attribute("r", "4.0")?;
+        man_shadow.set_attribute("cx", "5.0")?;
+        man_shadow.set_attribute("cy", "5.0")?;
+        man_shadow.set_attribute("visibility", "hidden")?;
+        pieces_group.append_child(&man_shadow)?;
+
         for y in 0..HEIGHT {
             let g = doc.create_svg_element("line")?;
             g.set_attribute("x1", "5")?;
@@ -320,6 +329,7 @@ impl Board {
             undo_button,
             game_states: vec![game],
             grid: HashMap::new(),
+            man_shadow,
         };
 
         let ball = out.new_ball()?;
@@ -409,9 +419,26 @@ impl Board {
         Ok(())
     }
 
-    fn on_board_hover(&mut self, _evt: PointerEvent) -> JsError {
+    fn on_board_hover(&mut self, evt: PointerEvent) -> JsError {
+        if self.state != BoardState::Idle || self.mov.is_some() {
+            self.man_shadow.set_attribute("vsibility", "hidden")?;
+            return Ok(());
+        }
+        evt.prevent_default();
+
+        let (mx, my) = self.mouse_pos(evt.as_ref());
+        let x = mx.floor() as u8;
+        let y = my.floor() as u8;
+
+        if !self.grid.contains_key(&(x, y)) && man_in_bounds((x, y)) {
+            self.man_shadow.set_attribute(
+                "transform", &format!("translate({} {})",
+                                      x * 10, y * 10))?;
+            self.man_shadow.set_attribute("visibility", "visible")?;
+        } else {
+            self.man_shadow.set_attribute("visibility", "hidden")?;
+        }
         Ok(())
-        // TODO: show invisible man over location
     }
 
     fn on_pointer_down(&mut self, evt: PointerEvent) -> JsError {
@@ -430,12 +457,11 @@ impl Board {
             .dyn_into::<Element>()?;
 
         // Shadow goes underneath the dragged piece
-        let shadow = self.doc.create_svg_element("rect")?;
+        let shadow = self.doc.create_svg_element("circle")?;
         shadow.class_list().add_1("shadow")?;
-        shadow.set_attribute("width", "9.5")?;
-        shadow.set_attribute("height", "9.5")?;
-        shadow.set_attribute("x", "0.25")?;
-        shadow.set_attribute("y", "0.25")?;
+        shadow.set_attribute("r", "4.0")?;
+        shadow.set_attribute("cx", "5.0")?;
+        shadow.set_attribute("cy", "5.0")?;
         shadow.set_attribute("visibility", "hidden")?;
         self.pieces_group.append_child(&shadow)?;
 
@@ -705,33 +731,14 @@ impl Board {
 
     fn new_ball(&self) -> JsResult<Element> {
         let g = self.doc.create_svg_element("g")?;
-        let r = self.doc.create_svg_element("rect")?;
-        r.class_list().add_1("tile")?;
-        r.set_attribute("width", "9.5")?;
-        r.set_attribute("height", "9.5")?;
-        r.set_attribute("x", "0.25")?;
-        r.set_attribute("y", "0.25")?;
         let s = self.doc.create_svg_element("circle")?;
-        s.set_attribute("r", "3.0")?;
+        s.set_attribute("r", "4.0")?;
         s.set_attribute("cx", "5.0")?;
         s.set_attribute("cy", "5.0")?;
         s.class_list().add_1("color")?;
 
-        g.append_child(&r)?;
         g.append_child(&s)?;
-        g.class_list().add_1("shape-blue")?;
-
-        // Add carets on the corners based on color, to be accessible
-        let mut pts = Vec::new();
-        pts.push("0.5,9.5 3,9.5 0.5,7");
-
-        for poly in pts.into_iter() {
-            let corner = self.doc.create_svg_element("polygon")?;
-            corner.set_attribute("points", poly)?;
-            corner.class_list().add_1("corner")?;
-            corner.class_list().add_1("color")?;
-            g.append_child(&corner)?;
-        }
+        g.class_list().add_1("ball")?;
 
         let mut options = AddEventListenerOptions::new();
         options.passive(false);

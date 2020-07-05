@@ -18,6 +18,9 @@
     --green: #5e5;
     --red: #f55;
     --dark-red: #922;
+
+    --light-blue: #ccf0ff;
+    --light-orange: #ffe6cc;
 }
 
 body {
@@ -154,19 +157,15 @@ tr.disconnected {
     color: var(--dark4);
 }
 
-/*  Tiles on the board */
-g.placed rect.tile {
-    fill: var(--dark3);
+g.piece circle {
     stroke-width: 0.5;
     stroke: var(--dark4);
 }
-div#svg_div.nyt g.piece rect.tile {
-    fill: var(--dark3);
+g.ball circle {
+    fill: var(--blue);
 }
-g.piece rect.tile {
-    fill: var(--dark1);
-    stroke-width: 0.5;
-    stroke: var(--dark4);
+g.man circle {
+    fill: var(--orange);
 }
 div#svg_div.nyt g.piece {
     pointer-events: none;
@@ -180,41 +179,18 @@ div#svg_div.nyt rect#board_rect {
 rect#board_rect {
     pointer-events: all;
 }
-g.piece {
-    pointer-events: auto;
+circle.shadow {
+    fill: var(--light-blue);
+    stroke-width: 0.5;
+    stroke: var(--light2);
 }
-rect.shadow {
-    fill: var(--light1);
+circle.man_shadow {
+    fill: var(--light-orange);
     stroke-width: 0.5;
     stroke: var(--light2);
 }
 rect#board_rect {
     fill: none;
-}
-g.shape-orange .color {
-    fill: var(--orange);
-}
-.shape-yellow .color {
-    fill: var(--yellow);
-}
-g.shape-green .color {
-    fill: var(--green);
-}
-g.shape-red .color {
-    fill: var(--red);
-}
-g.shape-blue .color {
-    fill: var(--blue);
-}
-g.shape-purple .color {
-    fill: var(--violet);
-}
-
-.corner {
-    visibility: hidden;
-}
-div.colorblind .corner {
-    visibility: visible;
 }
 
 /*  Buttons to submit your play */
