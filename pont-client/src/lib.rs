@@ -2,7 +2,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::convert::FromWasmAbi;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use web_sys::{
     AddEventListenerOptions,
@@ -25,7 +25,7 @@ use web_sys::{
 };
 
 use pont_common::{ClientMessage, ServerMessage, Side, Game, Position, Move, PositionState,
-ball_in_bounds, man_in_bounds, WIDTH, HEIGHT};
+man_in_bounds, WIDTH, HEIGHT};
 
 // Minimal logging macro
 macro_rules! console_log {
@@ -136,8 +136,6 @@ struct DropBall {
 }
 
 #[derive(PartialEq)]
-struct DropManyToGrid(Vec<TileAnimation>);
-#[derive(PartialEq)]
 struct ReturnBall(TileAnimation);
 #[derive(PartialEq)]
 struct JumpBall(Vec<TileAnimation>);
@@ -146,7 +144,6 @@ struct JumpBall(Vec<TileAnimation>);
 enum DragAnim {
     DropBall(DropBall),
     ReturnBall(ReturnBall),
-    DropManyToGrid(DropManyToGrid),
     JumpBall(JumpBall),
 }
 
@@ -341,7 +338,7 @@ impl Board {
             return Ok(());
         }
         let position = (x as u8, y as u8);
-        if !man_in_bounds(position) {
+        if !man_in_bounds(position) || self.grid.contains_key(&position) {
             return Ok(());
         }
         let man = self.new_man()?;
@@ -360,7 +357,7 @@ impl Board {
         Ok(())
     }
 
-    fn on_board_hover(&mut self, evt: PointerEvent) -> JsError {
+    fn on_board_hover(&mut self, _evt: PointerEvent) -> JsError {
         Ok(())
         // TODO: show invisible man over location
     }
@@ -396,7 +393,7 @@ impl Board {
             target = target.parent_node().unwrap().dyn_into::<Element>()?;
         }
         let (mx, my) = self.mouse_pos(evt.as_ref());
-        let (mut tx, mut ty) = Self::get_transform(&target);
+        let (tx, ty) = Self::get_transform(&target);
 
         let x = tx.round() as i32 / 10;
         let y = ty.round() as i32 / 10;
@@ -582,17 +579,6 @@ impl Board {
                         }
                     }
                 },
-                DragAnim::DropManyToGrid(DropManyToGrid(d)) => {
-                    let mut any_running = false;
-                    for a in d.iter() {
-                        any_running |= a.run(t)?;
-                    }
-                    if any_running {
-                        self.request_animation_frame()?;
-                    } else {
-                        self.state = BoardState::Idle;
-                    }
-                },
                 DragAnim::JumpBall(JumpBall(jumps)) => {
                     let mut any_running = false;
                     for a in jumps.iter() {
@@ -685,6 +671,17 @@ impl Board {
             corner.class_list().add_1("color")?;
             g.append_child(&corner)?;
         }
+
+        let mut options = AddEventListenerOptions::new();
+        options.passive(false);
+        g.add_event_listener_with_callback_and_add_event_listener_options(
+            "pointerdown",
+            self.pointer_down_cb.as_ref().unchecked_ref(),
+            &options)?;
+        g.add_event_listener_with_callback_and_add_event_listener_options(
+            "touchstart",
+            self.touch_start_cb.as_ref().unchecked_ref(),
+            &options)?;
 
         g.class_list().add_1("piece")?;
 
@@ -1059,7 +1056,7 @@ impl Playing {
         let mut board = Board::new(&base.doc, game)?;
 
         if active_side != your_side {
-            board.set_my_turn(false);
+            board.set_my_turn(false)?;
         }
 
         let b = base.doc.get_element_by_id("chat_name")
@@ -1102,8 +1099,8 @@ impl Playing {
             _keyup_cb: keyup_cb,
         };
 
-        out.add_player_row("".to_string());
-        out.add_player_row("".to_string());
+        out.add_player_row("".to_string())?;
+        out.add_player_row("".to_string())?;
         out.change_player_name(your_side, &format!("{} (you)", player_name));
         out.change_player_name(your_side.opposite(), opponent.as_deref().unwrap_or(""));
 
@@ -1275,7 +1272,6 @@ impl Playing {
             Move::Man(pos) => {
                 let man = self.board.new_man()?;
                 self.board.pieces_group.append_child(&man)?;
-                man.class_list().add_1("placed")?;
                 man.set_attribute("transform",
                                 &format!("translate({} {})", pos.0 * 10, pos.1 * 10))?;
                 self.board.grid.insert(pos, man);
