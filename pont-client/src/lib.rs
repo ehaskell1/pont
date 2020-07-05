@@ -427,8 +427,8 @@ impl Board {
         evt.prevent_default();
 
         let (mx, my) = self.mouse_pos(evt.as_ref());
-        let x = mx.floor() as u8;
-        let y = my.floor() as u8;
+        let x = (mx / 10.0).floor() as u8;
+        let y = (my / 10.0).floor() as u8;
 
         if !self.grid.contains_key(&(x, y)) && man_in_bounds((x, y)) {
             self.man_shadow.set_attribute(
@@ -695,35 +695,13 @@ impl Board {
 
     fn new_man(&self) -> JsResult<Element> {
         let g = self.doc.create_svg_element("g")?;
-        let r = self.doc.create_svg_element("rect")?;
-        r.class_list().add_1("tile")?;
-        r.set_attribute("width", "9.5")?;
-        r.set_attribute("height", "9.5")?;
-        r.set_attribute("x", "0.25")?;
-        r.set_attribute("y", "0.25")?;
-
         let s = self.doc.create_svg_element("circle")?;
-        s.set_attribute("r", "3.0")?;
+        s.set_attribute("r", "4.0")?;
         s.set_attribute("cx", "5.0")?;
         s.set_attribute("cy", "5.0")?;
-        s.class_list().add_1("color")?;
 
-        g.append_child(&r)?;
         g.append_child(&s)?;
-        g.class_list().add_1("shape-orange")?;
-
-        // Add carets on the corners based on color, to be accessible
-        let mut pts = Vec::new();
-        pts.push("0.5,0.5 3,0.5 0.5,3");
-
-        for poly in pts.into_iter() {
-            let corner = self.doc.create_svg_element("polygon")?;
-            corner.set_attribute("points", poly)?;
-            corner.class_list().add_1("corner")?;
-            corner.class_list().add_1("color")?;
-            g.append_child(&corner)?;
-        }
-
+        g.class_list().add_1("man")?;
         g.class_list().add_1("piece")?;
 
         Ok(g)
@@ -735,7 +713,6 @@ impl Board {
         s.set_attribute("r", "4.0")?;
         s.set_attribute("cx", "5.0")?;
         s.set_attribute("cy", "5.0")?;
-        s.class_list().add_1("color")?;
 
         g.append_child(&s)?;
         g.class_list().add_1("ball")?;
