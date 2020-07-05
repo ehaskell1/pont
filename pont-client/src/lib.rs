@@ -1055,8 +1055,8 @@ impl Playing {
 
         let mut board = Board::new(&base.doc, game)?;
 
-        if active_side != your_side {
-            board.set_my_turn(false)?;
+        if active_side == your_side {
+            board.set_my_turn(true)?;
         }
 
         let b = base.doc.get_element_by_id("chat_name")
