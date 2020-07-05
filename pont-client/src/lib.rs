@@ -1222,6 +1222,7 @@ impl Playing {
     }
 
     fn on_board_click(&mut self, evt: PointerEvent) -> JsError {
+        console_log!("Board was clicked");
         self.board.on_board_click(evt)
     }
 
@@ -1230,6 +1231,7 @@ impl Playing {
     }
 
     fn on_pointer_down(&mut self, evt: PointerEvent) -> JsError {
+        console_log!("Pointer down");
         self.board.on_pointer_down(evt)
     }
 
@@ -1238,6 +1240,7 @@ impl Playing {
     }
 
     fn on_pointer_up(&mut self, evt: PointerEvent) -> JsError {
+        console_log!("Pointer up");
         self.board.on_pointer_up(evt)
     }
 
