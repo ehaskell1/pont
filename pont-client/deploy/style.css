@@ -168,15 +168,17 @@ g.piece rect.tile {
     stroke-width: 0.5;
     stroke: var(--dark4);
 }
-g.invalid rect.tile {
-    fill: var(--dark-red);
-    stroke: var(--red);
-}
 div#svg_div.nyt g.piece {
     pointer-events: none;
 }
+g.piece {
+    pointer-events: auto;
+}
 div#svg_div.nyt rect#board_rect {
     pointer-events: none;
+}
+rect#board_rect {
+    pointer-events: all;
 }
 g.piece {
     pointer-events: auto;
