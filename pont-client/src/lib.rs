@@ -443,14 +443,18 @@ impl Board {
             let tx = (x / 10.0).round() as u8;
             let ty = (y / 10.0).round() as u8;
 
-            if let Some(Move::Ball(jumps)) = &self.mov {
-                let mut jumps = jumps.clone();
-                jumps.push((tx, ty));
-                if self.game.clone().move_ball(jumps).is_some() {
-                    return Ok((pos, DropTarget::DropBall((tx, ty))));
-                }
-            } else {
-                unreachable!();
+            let jumps =
+                match &self.mov {
+                    Some(Move::Ball(jumps)) => {
+                        let mut jumps = jumps.clone();
+                        jumps.push((tx, ty));
+                        jumps
+                    }
+                    None => vec![(tx, ty)],
+                    _ => unreachable!(),
+                };
+            if self.game.clone().move_ball(jumps).is_some() {
+                return Ok((pos, DropTarget::DropBall((tx, ty))));
             }
 
             // Otherwise, return to the grid
@@ -1183,7 +1187,9 @@ impl Playing {
             .unwrap()
             .dyn_into::<HtmlElement>()?;
         c.class_list().remove_1("disconnected")?;
-        self.on_information(&format!("{} joined the room", name))
+        self.on_information(&format!("{} joined the room", name))?;
+        self.opponent = Some(name.to_string());
+        Ok(())
     }
 
     fn on_opponent_disconnected(&mut self) -> JsError {
