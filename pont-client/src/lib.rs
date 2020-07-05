@@ -543,6 +543,11 @@ impl Board {
 
             self.state = BoardState::Animation(drag_anim);
             self.request_animation_frame()?;
+
+            if self.mov.is_some() {
+                self.accept_button.set_disabled(false);
+                self.undo_button.set_disabled(false);
+            }
         }
         Ok(())
     }
@@ -564,13 +569,6 @@ impl Board {
                         self.svg.remove_child(&d.anim.target)?;
                         self.pieces_group.append_child(&d.anim.target)?;
                         self.state = BoardState::Idle;
-                        if self.mov.is_some() {
-                            self.accept_button.set_disabled(false);
-                            self.accept_button.set_disabled(false);
-                        } else {
-                            self.accept_button.set_disabled(true);
-                            self.undo_button.set_disabled(true);
-                        }
                     }
                 }
                 DragAnim::DropBall(d) => {
@@ -584,8 +582,6 @@ impl Board {
                         self.svg.remove_child(&d.anim.target)?;
                         self.pieces_group.append_child(&d.anim.target)?;
                         self.state = BoardState::Idle;
-                        self.accept_button.set_disabled(false);
-                        self.undo_button.set_disabled(false);
                     }
                 },
                 DragAnim::ReturnBall(d) => {
@@ -595,12 +591,6 @@ impl Board {
                         self.svg.remove_child(&d.0.target)?;
                         self.pieces_group.append_child(&d.0.target)?;
                         self.state = BoardState::Idle;
-                        if self.mov.is_some() {
-                            self.accept_button.set_disabled(false);
-                        } else {
-                            self.accept_button.set_disabled(true);
-                            self.undo_button.set_disabled(true);
-                        }
                     }
                 },
                 DragAnim::JumpBall(JumpBall(jumps)) => {
@@ -752,8 +742,8 @@ impl Board {
             _ => unreachable!(),
         }
 
-        self.accept_button.set_disabled(true);
-        self.undo_button.set_disabled(true);
+        self.accept_button.set_disabled(self.mov.is_none());
+        self.undo_button.set_disabled(self.mov.is_none());
 
         Ok(())
     }
