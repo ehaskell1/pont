@@ -189,7 +189,7 @@ impl Board {
     {
         let board_rect = doc.get_element_by_id("board_rect")
             .expect("Could not find board_rect");
-        set_event_cb(&board_rect, "click", move |evt: MouseEvent| {
+        set_event_cb(&board_rect, "pointerup", move |evt: PointerEvent| {
             HANDLE.lock().unwrap()
                 .on_board_click(evt)
         }).forget();
@@ -325,13 +325,13 @@ impl Board {
         (x, y)
     }
 
-    fn on_board_click(&mut self, evt: MouseEvent) -> JsError {
+    fn on_board_click(&mut self, evt: PointerEvent) -> JsError {
         if self.state != BoardState::Idle || self.mov.is_some() {
             return Ok(());
         }
         evt.prevent_default();
 
-        let (mx, my) = self.mouse_pos(&evt);
+        let (mx, my) = self.mouse_pos(evt.as_ref());
         let x = mx.round() as i32 / 10;
         let y = my.round() as i32 / 10;
         if x < 0 || y < 0 {
@@ -846,7 +846,7 @@ impl State {
 
     methods!(
         Playing => [
-            on_board_click(evt: MouseEvent),
+            on_board_click(evt: PointerEvent),
             on_board_hover(evt: PointerEvent),
             on_pointer_down(evt: PointerEvent),
             on_pointer_up(evt: PointerEvent),
@@ -1208,14 +1208,16 @@ impl Playing {
             .dyn_into::<HtmlElement>()?;
         c.class_list().add_1("disconnected")?;
         self.on_information(&format!("{} disconnected",
-                                     self.opponent.as_ref().unwrap()))
+                                     self.opponent.as_ref().unwrap()))?;
+        self.opponent = None;
+        Ok(())
     }
 
     fn on_anim(&mut self, t: f64) -> JsError {
         self.board.on_anim(t)
     }
 
-    fn on_board_click(&mut self, evt: MouseEvent) -> JsError {
+    fn on_board_click(&mut self, evt: PointerEvent) -> JsError {
         self.board.on_board_click(evt)
     }
 
