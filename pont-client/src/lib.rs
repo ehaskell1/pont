@@ -551,21 +551,23 @@ impl Board {
     }
 
     fn on_anim(&mut self, t: f64) -> JsError {
-        if let BoardState::Animation(drag) = &self.state {
+        if let BoardState::Animation(drag) = &mut self.state {
             match drag {
                 DragAnim::UndoBall(d) => {
+                    let target = d.anim.target.clone();
+                    let add_men = d.add_men.clone();
                     if d.anim.run(t)? {
                         self.request_animation_frame()?;
                     } else {
-                        for &(x, y) in &d.add_men {
+                        for &(x, y) in &add_men {
                             let man = self.new_man()?;
                             self.pieces_group.append_child(&man)?;
                             man.set_attribute("transform",
                                               &format!("translate({} {})", x * 10, y * 10))?;
                             self.grid.insert((x, y), man);
                         }
-                        self.svg.remove_child(&d.anim.target)?;
-                        self.pieces_group.append_child(&d.anim.target)?;
+                        self.svg.remove_child(&target)?;
+                        self.pieces_group.append_child(&target)?;
                         self.state = BoardState::Idle;
                     }
                 }
@@ -592,18 +594,17 @@ impl Board {
                     }
                 },
                 DragAnim::JumpBall(JumpBall(jumps)) => {
-                    let mut any_running = false;
-                    for a in jumps.iter() {
-                        if a.run(t)? {
-                            any_running = true;
-                            self.request_animation_frame()?;
-                            break;
-                        }
+                    let mut target = None;
+                    if jumps.first().unwrap().run(t)? {
+                        target = Some(jumps.remove(0).target);
                     }
-                    if !any_running {
-                        self.svg.remove_child(&jumps.last().unwrap().target)?;
-                        self.pieces_group.append_child(&jumps.last().unwrap().target)?;
+                    if jumps.is_empty() {
+                        let target = target.unwrap();
+                        self.svg.remove_child(&target)?;
+                        self.pieces_group.append_child(&target)?;
                         self.state = BoardState::Idle;
+                    } else {
+                        self.request_animation_frame()?;
                     }
                 }
             }
@@ -1250,6 +1251,9 @@ impl Playing {
     }
 
     fn on_accept_button(&mut self, evt: Event) -> JsError {
+        if self.board.state != BoardState::Idle {
+            return Ok(());
+        }
         console_log!("Accept button pressed");
         self.base.send(ClientMessage::Move(self.board.make_move(evt)?))
     }
