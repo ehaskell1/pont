@@ -398,8 +398,6 @@ impl Board {
         let y = ty.round() as i32 / 10;
         self.pieces_group.remove_child(&target)?;
         self.grid.remove(&(x as u8, y as u8));
-        self.accept_button.set_disabled(true);
-        self.undo_button.set_disabled(true);
 
         // Move to the back of the SVG object, so it's on top
         self.svg.append_child(&target)?;
@@ -720,6 +718,7 @@ impl Board {
                 }
                 let mut prev_game = self.game_states.last().unwrap().clone();
                 let t = self.grid.remove(&game.ball).unwrap();
+                self.grid.insert(prev_game.ball, t.clone());
                 self.pieces_group.remove_child(&t)?;
                 self.svg.append_child(&t)?;
                 let drag = DragAnim::UndoBall(UndoBall {
