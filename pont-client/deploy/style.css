@@ -175,6 +175,9 @@ g.invalid rect.tile {
 div#svg_div.nyt g.piece {
     pointer-events: none;
 }
+div#svg_div.nyt rect#board_rect {
+    pointer-events: none;
+}
 g.piece {
     pointer-events: auto;
 }
@@ -185,7 +188,6 @@ rect.shadow {
 }
 rect#board_rect {
     fill: none;
-    pointer-events: all;
 }
 g.shape-orange .color {
     fill: var(--orange);
