@@ -31,6 +31,11 @@ pub enum ServerMessage {
     MoveAccepted,
     MoveRejected,
     ItsOver(Side),
+    NewGame {
+        active_side: Side,
+        your_side: Side,
+        game: Game,
+    }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq, Hash)]
@@ -90,9 +95,9 @@ pub struct Game {
 impl Game {
     pub fn winner(&self) -> Option<Side> {
         let (_, y) = self.ball;
-        if y == 0 {
+        if y <= 1 {
             Some(Side::Bottom)
-        } else if y == HEIGHT - 1 {
+        } else if y >= HEIGHT - 2 {
             Some(Side::Top)
         } else {
             None

@@ -18,14 +18,6 @@
     --green: #5e5;
     --red: #f55;
     --dark-red: #922;
-
-    --light-blue: #ccf0ff;
-    --light-orange: #ffe6cc;
-
-    --field-green: #49B549;
-    --goal: #238423;
-    --man: #2B2B2B;
-    --ball: #EFEFEF;
 }
 
 body {
@@ -161,27 +153,34 @@ tr.player-row.active i {
 tr.disconnected {
     color: var(--dark4);
 }
-
+/* ------------------------------ COLORS -------------------------------- */
+rect.boundary {
+    fill: #238423;
+}
 rect.goal {
-    fill: var(--goal);
+    fill: #2882FF;
+    stroke: #005CD6;
+    stroke-width: 1.0;
 }
-
 rect.field {
-    fill: var(--field-green);
+    fill: #49B549;
 }
-
 g.ball circle {
-    stroke-width: 0.5;
-    fill: var(--ball);
-    stroke: #DDDDDD;
+    stroke-width: 0.7;
+    fill: #EFEFEF;
+    stroke: #BABABA;
 }
 g.man circle {
-    fill: var(--man);
-    stroke-width: 0.5;
+    fill: #2B2B2B;
+    stroke-width: 0.7;
     stroke: #6B6B6B;
+}
+circle.shadow {
+    opacity: 0.3;
 }
 div#svg_div.nyt g.piece {
     pointer-events: none;
+    opacity: 0.7;
 }
 g.piece {
     pointer-events: auto;
@@ -191,9 +190,6 @@ div#svg_div.nyt rect#board_rect {
 }
 rect#board_rect {
     pointer-events: all;
-}
-circle.shadow {
-    opacity: 0.3;
 }
 rect#board_rect {
     fill: none;

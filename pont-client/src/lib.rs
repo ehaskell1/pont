@@ -322,7 +322,6 @@ impl Board {
         let grid_lines = doc.get_element_by_id("grid_lines")
             .expect("Could nto find grid_lines");
 
-
         let man_shadow = doc.create_svg_element("circle")?;
         man_shadow.class_list().add_1("shadow")?;
         man_shadow.class_list().add_1("man")?;
@@ -332,26 +331,34 @@ impl Board {
         man_shadow.set_attribute("visibility", "hidden")?;
         pieces_group.append_child(&man_shadow)?;
 
-        for y in &["0", "200"] {
+        let g = doc.create_svg_element("rect")?;
+        g.set_attribute("width", "150")?;
+        g.set_attribute("height", "210")?;
+        g.set_attribute("x", "0")?;
+        g.set_attribute("y", "0")?;
+        g.class_list().add_1("boundary")?;
+        grid_lines.append_child(&g)?;
+
+        let g = doc.create_svg_element("rect")?;
+        g.set_attribute("width", "140")?;
+        g.set_attribute("height", "200")?;
+        g.set_attribute("x", "5")?;
+        g.set_attribute("y", "5")?;
+        g.class_list().add_1("field")?;
+        grid_lines.append_child(&g)?;
+
+        for y in &["5", "195"] {
             let g = doc.create_svg_element("rect")?;
-            g.set_attribute("width", "150")?;
+            g.set_attribute("width", "140")?;
             g.set_attribute("height", "10")?;
-            g.set_attribute("x", "0")?;
+            g.set_attribute("x", "5")?;
             g.set_attribute("y", y)?;
             g.class_list().add_1("goal")?;
             grid_lines.append_child(&g)?;
         }
 
-        let g = doc.create_svg_element("rect")?;
-        g.set_attribute("width", "150")?;
-        g.set_attribute("height", "190")?;
-        g.set_attribute("x", "0")?;
-        g.set_attribute("y", "10")?;
-        g.class_list().add_1("field")?;
-        grid_lines.append_child(&g)?;
 
-
-        for y in 1..(HEIGHT-1) {
+        for y in 0..HEIGHT {
             let g = doc.create_svg_element("line")?;
             g.set_attribute("x1", "5")?;
             g.set_attribute("x2", "145")?;
@@ -416,6 +423,39 @@ impl Board {
         }
 
         Ok(out)
+    }
+
+    fn new_game(&mut self, game: Game, side: Side) -> JsError {
+        for piece in self.grid.values() {
+            self.pieces_group.remove_child(&piece)?;
+        }
+        self.grid = HashMap::new();
+        self.game_states = vec![game];
+        self.side = side;
+
+        let ball = self.new_ball()?;
+        self.pieces_group.append_child(&ball)?;
+        let (x, y) = self.grid_position(self.game_states[0].ball);
+        ball.set_attribute("transform",
+                           &format!("translate({} {})", x, y))?;
+
+        self.grid.insert(self.game_states[0].ball, ball);
+
+        for x in 0..WIDTH {
+            for y in 0..HEIGHT {
+                if let PositionState::Man = self.game_states[0].board[x as usize][y as usize] {
+                    let man = self.new_man(1.0)?;
+                    self.pieces_group.append_child(&man)?;
+                    man.class_list().add_1("placed")?;
+                    let grid_position = self.grid_position((x, y));
+                    man.set_attribute("transform",
+                                      &format!("translate({} {})", grid_position.0, grid_position.1))?;
+                    self.grid.insert((x, y), man);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn grid_position(&self, (x, y): (u8, u8)) -> Pos {
@@ -947,6 +987,7 @@ struct Playing {
     your_side: Side,
     active_side: Side,
     opponent: Option<String>,
+    player_name: String,
 
     board: Board,
 
@@ -995,6 +1036,7 @@ impl State {
             on_move_accepted(),
             on_move_rejected(),
             on_finished(winner: Side),
+            on_new_game(active_side: Side, your_side: Side, game: Game),
         ],
         CreateOrJoin => [
             on_room_name_invalid(),
@@ -1186,11 +1228,7 @@ impl Playing {
             .dyn_into()?;
         s.set_text_content(Some(&room_name));
 
-        let mut board = Board::new(&base.doc, game, your_side)?;
-
-        if active_side == your_side {
-            board.set_my_turn(true)?;
-        }
+        let board = Board::new(&base.doc, game, your_side)?;
 
         let b = base.doc.get_element_by_id("chat_name")
             .expect("Could not get chat_name");
@@ -1228,6 +1266,7 @@ impl Playing {
             your_side,
             active_side,
             opponent: opponent.clone(),
+            player_name: player_name.clone(),
 
             _keyup_cb: keyup_cb,
         };
@@ -1240,6 +1279,16 @@ impl Playing {
         out.set_my_turn(active_side == your_side)?;
 
         Ok(out)
+    }
+
+    fn on_new_game(&mut self, active_side: Side, your_side: Side, game: Game) -> JsError {
+        self.on_information("New game started!")?;
+        self.active_side = active_side;
+        self.your_side = your_side;
+        self.change_player_name(your_side, &format!("{} (you)", self.player_name));
+        self.change_player_name(your_side.opposite(), self.opponent.clone().as_deref().unwrap_or(""));
+        self.board.new_game(game, your_side)?;
+        self.set_my_turn(active_side == your_side)
     }
 
     fn set_my_turn(&mut self, my_turn: bool) -> JsError {
@@ -1511,6 +1560,7 @@ fn on_message(msg: ServerMessage) -> JsError {
         MoveAccepted => state.on_move_accepted(),
         MoveRejected => state.on_move_rejected(),
         ItsOver(winner) => state.on_finished(winner),
+        NewGame{active_side, your_side, game} => state.on_new_game(active_side, your_side, game),
     }
 }
 

@@ -139,7 +139,6 @@ type RoomList = Arc<Mutex<HashMap<String, RoomHandle>>>;
 struct Room {
     name: String,
     started: bool,
-    ended: bool,
     connections: HashMap<SocketAddr, Side>,
     players: HashMap<Side, Player>,
     active_side: Side,
@@ -258,6 +257,8 @@ impl Room {
             return;
         }
 
+        self.next_player();
+
         self.send(self.active_side, ServerMessage::MoveAccepted);
         self.broadcast_except(self.active_side, ServerMessage::OpponentMoved(Move::Man(pos)));
     }
@@ -272,12 +273,29 @@ impl Room {
             return;
         }
 
-        self.send(self.active_side, ServerMessage::MoveAccepted);
-        self.broadcast_except(self.active_side, ServerMessage::OpponentMoved(Move::Ball(jumps)));
-
         if let Some(winner) = self.game.winner() {
+            self.send(self.active_side, ServerMessage::MoveAccepted);
+            self.broadcast_except(self.active_side, ServerMessage::OpponentMoved(Move::Ball(jumps)));
+
             self.broadcast(ServerMessage::ItsOver(winner));
-            self.ended = true;
+            self.game = Game::default();
+            self.active_side = Side::default();
+            // switch sides
+            self.connections.values_mut().for_each(|side| *side = side.opposite());
+            self.players = self.players.drain().map(|(side, player)| (side.opposite(), player)).collect();
+            // broadcast new game
+            for &side in &[Side::Bottom, Side::Top] {
+                self.send(side, ServerMessage::NewGame {
+                    active_side: self.active_side,
+                    your_side: side,
+                    game: self.game.clone(),
+                });
+            }
+        } else {
+            self.send(self.active_side, ServerMessage::MoveAccepted);
+            self.broadcast_except(self.active_side, ServerMessage::OpponentMoved(Move::Ball(jumps)));
+
+            self.next_player();
         }
     }
 
@@ -300,16 +318,11 @@ impl Room {
                 warn!("[{}] Invalid client message {:?}", self.name, msg);
             },
             ClientMessage::Move(mov) => {
-                if self.ended {
-                    warn!("[{}] Got play after move ended", self.name);
-                } else if let Some(s) = self.connections.get(&addr).copied() {
+                if let Some(s) = self.connections.get(&addr).copied() {
                     if s == self.active_side {
                         match mov {
                             Move::Man(pos) => self.on_man(pos),
                             Move::Ball(hops) => self.on_ball(hops),
-                        }
-                        if !self.ended {
-                            self.next_player();
                         }
                     } else {
                         warn!("[{}] Player {} out of turn", self.name, addr);
