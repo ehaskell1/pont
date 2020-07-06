@@ -203,7 +203,7 @@ rect#board_rect {
 button.gameplay {
     color: var(--dark1);
     position: absolute;
-    height: 10%;
+    height: 8%;
     width: 48%;
     font-size: 4vw;
 }
