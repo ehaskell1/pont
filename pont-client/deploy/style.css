@@ -22,7 +22,10 @@
     --light-blue: #ccf0ff;
     --light-orange: #ffe6cc;
 
-    --white: white;
+    --field-green: #49B549;
+    --goal-white: #D9E7D9;
+    --man: #2B2B2B;
+    --ball: #EFEFEF;
 }
 
 body {
@@ -160,22 +163,22 @@ tr.disconnected {
 }
 
 rect.goal {
-    fill: var(--white);
+    fill: var(--goal-white);
 }
 
 rect.field {
-    fill: var(--green);
+    fill: var(--field-green);
 }
 
-g.piece circle {
-    stroke-width: 1.5;
-    stroke: var(--dark4);
-}
 g.ball circle {
-    fill: var(--blue);
+    stroke-width: 0.8;
+    fill: var(--ball);
+    stroke: var(--man);
 }
 g.man circle {
-    fill: var(--orange);
+    fill: var(--man);
+    stroke-width: 0.8;
+    stroke: var(--ball);
 }
 div#svg_div.nyt g.piece {
     pointer-events: none;
@@ -190,14 +193,16 @@ rect#board_rect {
     pointer-events: all;
 }
 circle.shadow {
-    fill: var(--light-blue);
-    stroke-width: 1.5;
-    stroke: var(--light2);
+    stroke-width: 0.8;
+    fill: var(--ball);
+    stroke: var(--man);
+    opacity: 0.3;
 }
 circle.man_shadow {
-    fill: var(--light-orange);
-    stroke-width: 1.5;
-    stroke: var(--light2);
+    fill: var(--man);
+    stroke-width: 0.8;
+    stroke: var(--ball);
+    opacity: 0.3;
 }
 rect#board_rect {
     fill: none;

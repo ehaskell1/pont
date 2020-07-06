@@ -1432,7 +1432,9 @@ impl Playing {
                         }).1,
                 }));
                 self.board.request_animation_frame()?;
-                self.board.game_states.last_mut().unwrap().move_ball(jumps);
+                for remove_man in self.board.game_states.last_mut().unwrap().move_ball(jumps).unwrap() {
+                    self.board.grid.remove(&remove_man);
+                }
             }
             Move::Man(pos) => {
                 let man = self.board.new_man(0.0)?;
