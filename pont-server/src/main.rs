@@ -257,10 +257,10 @@ impl Room {
             return;
         }
 
+        let active_side = self.active_side;
         self.next_player();
-
-        self.send(self.active_side, ServerMessage::MoveAccepted);
-        self.broadcast_except(self.active_side, ServerMessage::OpponentMoved(Move::Man(pos)));
+        self.send(active_side, ServerMessage::MoveAccepted);
+        self.broadcast_except(active_side, ServerMessage::OpponentMoved(Move::Man(pos)));
     }
 
     fn on_ball(&mut self, jumps: Vec<Position>) {
@@ -272,11 +272,13 @@ impl Room {
             self.send(self.active_side, ServerMessage::MoveRejected);
             return;
         }
+        
+        let active_side = self.active_side;
+        self.next_player();
+        self.send(active_side, ServerMessage::MoveAccepted);
+        self.broadcast_except(active_side, ServerMessage::OpponentMoved(Move::Ball(jumps)));
 
         if let Some(winner) = self.game.winner() {
-            self.send(self.active_side, ServerMessage::MoveAccepted);
-            self.broadcast_except(self.active_side, ServerMessage::OpponentMoved(Move::Ball(jumps)));
-
             self.broadcast(ServerMessage::ItsOver(winner));
             self.game = Game::default();
             self.active_side = Side::default();
@@ -291,11 +293,6 @@ impl Room {
                     game: self.game.clone(),
                 });
             }
-        } else {
-            self.send(self.active_side, ServerMessage::MoveAccepted);
-            self.broadcast_except(self.active_side, ServerMessage::OpponentMoved(Move::Ball(jumps)));
-
-            self.next_player();
         }
     }
 
