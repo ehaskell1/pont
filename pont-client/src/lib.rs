@@ -149,11 +149,17 @@ impl JumpBall {
                                                             x, y))?;
             for i in 0..q {
                 for man in &self.men[i] {
-                    man.set_attribute("r", &format!("{}", 0.0))?;
+                    man.first_child()
+                        .unwrap()
+                        .dyn_into::<Element>()?
+                        .set_attribute("r", &format!("{}", 0.0))?;
                 }
             }
             for man in &self.men[q] {
-                man.set_attribute("r", &format!("{}", 4.0 * (1.0 - rem)))?;
+                man.first_child()
+                    .unwrap()
+                    .dyn_into::<Element>()?
+                    .set_attribute("r", &format!("{}", 4.0 * (1.0 - rem)))?;
             }
             Ok(true)
         }
@@ -168,7 +174,11 @@ impl PlaceMan {
         if frac > 1.0 {
             frac = 1.0;
         }
-        self.target.set_attribute("r", &format!("{}", frac * 4.0))?;
+        self.target
+            .first_child()
+            .unwrap()
+            .dyn_into::<Element>()?
+            .set_attribute("r", &format!("{}", frac * 4.0))?;
         Ok(frac < 1.0)
     }
 }
