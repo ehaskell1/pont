@@ -371,8 +371,8 @@ impl Board {
         }
         for x in 0..WIDTH {
             let g = doc.create_svg_element("line")?;
-            g.set_attribute("y1", "15")?;
-            g.set_attribute("y2", "195")?;
+            g.set_attribute("y1", "5")?;
+            g.set_attribute("y2", "205")?;
             let x = (5 + x * 10).to_string();
             g.set_attribute("x1", &x)?;
             g.set_attribute("x2", &x)?;
