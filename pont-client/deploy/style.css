@@ -23,7 +23,7 @@
     --light-orange: #ffe6cc;
 
     --field-green: #49B549;
-    --goal-white: #D9E7D9;
+    --goal: #238423;
     --man: #2B2B2B;
     --ball: #EFEFEF;
 }
@@ -163,7 +163,7 @@ tr.disconnected {
 }
 
 rect.goal {
-    fill: var(--goal-white);
+    fill: var(--goal);
 }
 
 rect.field {
@@ -171,14 +171,14 @@ rect.field {
 }
 
 g.ball circle {
-    stroke-width: 0.8;
+    stroke-width: 0.5;
     fill: var(--ball);
-    stroke: var(--man);
+    stroke: #DDDDDD;
 }
 g.man circle {
     fill: var(--man);
-    stroke-width: 0.8;
-    stroke: var(--ball);
+    stroke-width: 0.5;
+    stroke: #6B6B6B;
 }
 div#svg_div.nyt g.piece {
     pointer-events: none;
@@ -193,15 +193,6 @@ rect#board_rect {
     pointer-events: all;
 }
 circle.shadow {
-    stroke-width: 0.8;
-    fill: var(--ball);
-    stroke: var(--man);
-    opacity: 0.3;
-}
-circle.man_shadow {
-    fill: var(--man);
-    stroke-width: 0.8;
-    stroke: var(--ball);
     opacity: 0.3;
 }
 rect#board_rect {
@@ -213,7 +204,7 @@ button.gameplay {
     color: var(--dark1);
     position: absolute;
     height: 10%;
-    width: 10%;
+    width: 48%;
     font-size: 4vw;
 }
 button.gameplay:disabled {
@@ -222,45 +213,14 @@ button.gameplay:disabled {
     pointer-events: none;
 }
 button#undo_button {
-    left: 100%;
+    left: 0%;
     top: 100%;
-    transform: translateY(-100%) translateX(-100%);
+    transform: translateY(-100%) translateX(0%);
 }
 button#accept_button {
-    left: 100%;
+    right: 0%;
     top: 100%;
-    transform: translateY(-100%) translateX(-210%);
-}
-
-div#exchange_div {
-    position: absolute;
-    border:1px solid var(--dark4);
-    background-color: var(--light0);
-    height: 10%;
-    width: 27.5%;
-    top: calc(100%);
-    left: 0%;
-    transform: translateY(-100%) translateX(178%);
-
-    -webkit-user-select: none;
-    -ms-user-select: none;
-    user-select: none;
-}
-div#exchange_div.disabled {
-    color: var(--dark4);
-    background-color: var(--light1);
-}
-div#svg_div.nyt div#exchange_div {
-    color: var(--dark4);
-    background-color: var(--light1);
-}
-
-div#exchange_div p {
-    text-align: center;
-    margin: 0;
-    position: relative;
-    top: 50%;
-    transform: translateY(-50%);
+    transform: translateY(-100%) translateX(0%);
 }
 
 /*  This is only used for layout things */
@@ -284,13 +244,6 @@ div.background {
     position: absolute;
     border:1px solid var(--dark4);
     background-color: var(--light0);
-}
-div#hand {
-    left: 0px;
-    top: calc(100%);
-    transform: translateY(-100%);
-    width: calc(47.5%);
-    height: 10%;
 }
 div#board {
     left: 0px;

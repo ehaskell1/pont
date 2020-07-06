@@ -132,7 +132,7 @@ impl TileAnimation {
 impl JumpBall {
     // Returns true if the animation should keep running
     fn run(&self, t: f64) -> JsResult<bool> {
-        let anim_length = 500.0;
+        let anim_length = 300.0;
         let frac = ((t - self.t0) / anim_length) as f32;
         let q = frac as usize;
         if q >= self.points.len() - 1 {
@@ -169,7 +169,7 @@ impl JumpBall {
 impl PlaceMan {
     // Returns true if the animation should keep running
     fn run(&self, t: f64) -> JsResult<bool> {
-        let anim_length = 500.0;
+        let anim_length = 300.0;
         let mut frac = ((t - self.t0) / anim_length) as f32;
         if frac > 1.0 {
             frac = 1.0;
@@ -324,7 +324,8 @@ impl Board {
 
 
         let man_shadow = doc.create_svg_element("circle")?;
-        man_shadow.class_list().add_1("man_shadow")?;
+        man_shadow.class_list().add_1("shadow")?;
+        man_shadow.class_list().add_1("man")?;
         man_shadow.set_attribute("r", "4.0")?;
         man_shadow.set_attribute("cx", "5.0")?;
         man_shadow.set_attribute("cy", "5.0")?;
@@ -543,6 +544,7 @@ impl Board {
         // Shadow goes underneath the dragged piece
         let shadow = self.doc.create_svg_element("circle")?;
         shadow.class_list().add_1("shadow")?;
+        shadow.class_list().add_1("ball")?;
         shadow.set_attribute("r", "4.0")?;
         shadow.set_attribute("cx", "5.0")?;
         shadow.set_attribute("cy", "5.0")?;
@@ -556,7 +558,7 @@ impl Board {
         }
         let (mx, my) = self.mouse_pos(evt.as_ref());
         let (tx, ty) = Self::get_transform(&target);
-        let game_position = self.game_position((mx, my));
+        let game_position = self.game_position((tx, ty));
 
         self.pieces_group.remove_child(&target)?;
         self.grid.remove(&game_position);
@@ -610,7 +612,7 @@ impl Board {
             }
 
             let pos = (x, y);
-            let (tx, ty) = self.game_position(pos);
+            let (tx, ty) = self.game_position((x + 4.0, y + 4.0)); // get center of ball
 
             if self.game_states.last().unwrap().clone().move_ball(vec![(tx, ty)]).is_some() {
                 return Ok((pos, DropTarget::DropBall((tx, ty))));
