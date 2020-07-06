@@ -248,6 +248,7 @@ pub struct Board {
     grid: HashMap<Position, Element>,
     game_states: Vec<Game>,
     side: Side,
+    new_game: Option<(Side, Game)>,
 
     accept_button: HtmlButtonElement,
     undo_button: HtmlButtonElement,
@@ -398,6 +399,7 @@ impl Board {
             grid: HashMap::new(),
             man_shadow,
             side,
+            new_game: None,
         };
 
         let ball = out.new_ball()?;
@@ -426,6 +428,17 @@ impl Board {
     }
 
     fn new_game(&mut self, game: Game, side: Side) -> JsError {
+        self.new_game = Some((side, game));
+        if self.state == BoardState::Idle {
+            self.start_new_game()?;
+        }
+        Ok(())
+    }
+
+    fn start_new_game(&mut self) -> JsError {
+        let mut new_game = None;
+        std::mem::swap(&mut new_game, &mut self.new_game);
+        let (side, game) = new_game.unwrap();
         for piece in self.grid.values() {
             self.pieces_group.remove_child(&piece)?;
         }
@@ -810,6 +823,9 @@ impl Board {
                             }
                         }
                         self.state = BoardState::Idle;
+                        if self.new_game.is_some() {
+                            self.start_new_game()?;
+                        }
                     }
                 },
                 DragAnim::PlaceMan(p) => {
@@ -817,6 +833,9 @@ impl Board {
                         self.request_animation_frame()?;
                     } else {
                         self.state = BoardState::Idle;
+                        if self.new_game.is_some() {
+                            self.start_new_game()?;
+                        }
                     }
                 }
             }

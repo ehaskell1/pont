@@ -272,7 +272,7 @@ impl Room {
             self.send(self.active_side, ServerMessage::MoveRejected);
             return;
         }
-        
+
         let active_side = self.active_side;
         self.next_player();
         self.send(active_side, ServerMessage::MoveAccepted);
