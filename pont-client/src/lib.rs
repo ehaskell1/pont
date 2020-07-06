@@ -351,7 +351,7 @@ impl Board {
         grid_lines.append_child(&g)?;
 
 
-        for y in 0..HEIGHT {
+        for y in 1..(HEIGHT-1) {
             let g = doc.create_svg_element("line")?;
             g.set_attribute("x1", "5")?;
             g.set_attribute("x2", "145")?;
@@ -364,8 +364,8 @@ impl Board {
         }
         for x in 0..WIDTH {
             let g = doc.create_svg_element("line")?;
-            g.set_attribute("y1", "5")?;
-            g.set_attribute("y2", "205")?;
+            g.set_attribute("y1", "15")?;
+            g.set_attribute("y2", "195")?;
             let x = (5 + x * 10).to_string();
             g.set_attribute("x1", &x)?;
             g.set_attribute("x2", &x)?;
@@ -1265,7 +1265,11 @@ impl Playing {
         if self.active_side == self.your_side {
             self.on_information("It's your turn!")
         } else {
-            self.on_information("It's your opponent's turn!")
+            if let Some(opponent) = &self.opponent {
+                self.on_information(&format!("It's {}'s turn!", opponent))
+            } else {
+                self.on_information("It's your opponent's turn!")
+            }
         }?;
 
         self.board.set_my_turn(self.active_side == self.your_side)
@@ -1418,9 +1422,8 @@ impl Playing {
                 let t0 = get_time_ms();
                 self.board.pieces_group.remove_child(&ball)?;
                 self.board.svg.append_child(&ball)?;
-                self.board.grid.insert(*jumps.last().unwrap(), ball.clone());
                 self.board.state = BoardState::Animation(DragAnim::JumpBall(JumpBall {
-                    target: ball,
+                    target: ball.clone(),
                     points: std::iter::once(self.board.grid_position(start_pos))
                         .chain(jumps.iter().map(|&pos| self.board.grid_position(pos)))
                         .collect(),
@@ -1434,9 +1437,10 @@ impl Playing {
                         }).1,
                 }));
                 self.board.request_animation_frame()?;
-                for remove_man in self.board.game_states.last_mut().unwrap().move_ball(jumps).unwrap() {
+                for remove_man in self.board.game_states.last_mut().unwrap().move_ball(jumps.clone()).unwrap() {
                     self.board.grid.remove(&remove_man);
                 }
+                self.board.grid.insert(*jumps.last().unwrap(), ball);
             }
             Move::Man(pos) => {
                 let man = self.board.new_man(0.0)?;
