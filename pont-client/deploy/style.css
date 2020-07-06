@@ -21,6 +21,8 @@
 
     --light-blue: #ccf0ff;
     --light-orange: #ffe6cc;
+
+    --white: white;
 }
 
 body {
@@ -157,8 +159,16 @@ tr.disconnected {
     color: var(--dark4);
 }
 
+rect.goal {
+    fill: var(--white);
+}
+
+rect.field {
+    fill: var(--green);
+}
+
 g.piece circle {
-    stroke-width: 0.5;
+    stroke-width: 1.5;
     stroke: var(--dark4);
 }
 g.ball circle {
@@ -181,12 +191,12 @@ rect#board_rect {
 }
 circle.shadow {
     fill: var(--light-blue);
-    stroke-width: 0.5;
+    stroke-width: 1.5;
     stroke: var(--light2);
 }
 circle.man_shadow {
     fill: var(--light-orange);
-    stroke-width: 0.5;
+    stroke-width: 1.5;
     stroke: var(--light2);
 }
 rect#board_rect {

@@ -132,7 +132,7 @@ impl TileAnimation {
 impl JumpBall {
     // Returns true if the animation should keep running
     fn run(&self, t: f64) -> JsResult<bool> {
-        let anim_length = 100.0;
+        let anim_length = 500.0;
         let frac = ((t - self.t0) / anim_length) as f32;
         let q = frac as usize;
         if q >= self.points.len() - 1 {
@@ -147,8 +147,29 @@ impl JumpBall {
             let y = start.1 * (1.0 - rem) + end.1 * rem;
             self.target.set_attribute("transform", &format!("translate({} {})",
                                                             x, y))?;
+            for i in 0..q {
+                for man in &self.men[i] {
+                    man.set_attribute("r", &format!("{}", 0.0))?;
+                }
+            }
+            for man in &self.men[q] {
+                man.set_attribute("r", &format!("{}", 4.0 * (1.0 - rem)))?;
+            }
             Ok(true)
         }
+    }
+}
+
+impl PlaceMan {
+    // Returns true if the animation should keep running
+    fn run(&self, t: f64) -> JsResult<bool> {
+        let anim_length = 500.0;
+        let mut frac = ((t - self.t0) / anim_length) as f32;
+        if frac > 1.0 {
+            frac = 1.0;
+        }
+        self.target.set_attribute("r", &format!("{}", frac * 4.0))?;
+        Ok(frac < 1.0)
     }
 }
 
@@ -166,13 +187,20 @@ struct ReturnBall(TileAnimation);
 struct JumpBall {
     target: Element,
     points: Vec<Pos>,
+    men: Vec<Vec<Element>>,
     t0: f64,
 }
 
 #[derive(PartialEq)]
 struct UndoBall {
     anim: TileAnimation,
-    add_men: Vec<Position>,
+    add_men: Vec<(Position, Pos)>,
+}
+
+#[derive(PartialEq)]
+struct PlaceMan {
+    target: Element,
+    t0: f64,
 }
 
 #[derive(PartialEq)]
@@ -181,6 +209,7 @@ enum DragAnim {
     ReturnBall(ReturnBall),
     JumpBall(JumpBall),
     UndoBall(UndoBall),
+    PlaceMan(PlaceMan),
 }
 
 #[derive(PartialEq)]
@@ -208,6 +237,7 @@ pub struct Board {
     mov: Option<Move>,
     grid: HashMap<Position, Element>,
     game_states: Vec<Game>,
+    side: Side,
 
     accept_button: HtmlButtonElement,
     undo_button: HtmlButtonElement,
@@ -221,7 +251,7 @@ pub struct Board {
 }
 
 impl Board {
-    fn new(doc: &Document, game: Game)
+    fn new(doc: &Document, game: Game, side: Side)
         -> JsResult<Board>
     {
         let board_rect = doc.get_element_by_id("board_rect")
@@ -291,6 +321,25 @@ impl Board {
         man_shadow.set_attribute("visibility", "hidden")?;
         pieces_group.append_child(&man_shadow)?;
 
+        for y in &["0", "200"] {
+            let g = doc.create_svg_element("rect")?;
+            g.set_attribute("width", "150")?;
+            g.set_attribute("height", "10")?;
+            g.set_attribute("x", "0")?;
+            g.set_attribute("y", y)?;
+            g.class_list().add_1("goal")?;
+            grid_lines.append_child(&g)?;
+        }
+
+        let g = doc.create_svg_element("rect")?;
+        g.set_attribute("width", "150")?;
+        g.set_attribute("height", "190")?;
+        g.set_attribute("x", "0")?;
+        g.set_attribute("y", "10")?;
+        g.class_list().add_1("field")?;
+        grid_lines.append_child(&g)?;
+
+
         for y in 0..HEIGHT {
             let g = doc.create_svg_element("line")?;
             g.set_attribute("x1", "5")?;
@@ -330,29 +379,48 @@ impl Board {
             game_states: vec![game],
             grid: HashMap::new(),
             man_shadow,
+            side,
         };
 
         let ball = out.new_ball()?;
         out.pieces_group.append_child(&ball)?;
+        let (x, y) = out.grid_position(out.game_states[0].ball);
         ball.set_attribute("transform",
-                          &format!("translate({} {})", out.game_states[0].ball.0 * 10, out.game_states[0].ball.1 * 10))?;
+                          &format!("translate({} {})", x, y))?;
 
-        out.grid.insert(out.game_states.last().unwrap().ball, ball);
+        out.grid.insert(out.game_states[0].ball, ball);
 
         for x in 0..WIDTH {
             for y in 0..HEIGHT {
                 if let PositionState::Man = out.game_states[0].board[x as usize][y as usize] {
-                    let man = out.new_man()?;
+                    let man = out.new_man(1.0)?;
                     out.pieces_group.append_child(&man)?;
                     man.class_list().add_1("placed")?;
+                    let grid_position = out.grid_position((x, y));
                     man.set_attribute("transform",
-                                      &format!("translate({} {})", x * 10, y * 10))?;
+                                      &format!("translate({} {})", grid_position.0, grid_position.1))?;
                     out.grid.insert((x, y), man);
                 }
             }
         }
 
         Ok(out)
+    }
+
+    fn grid_position(&self, (x, y): (u8, u8)) -> Pos {
+        if self.side == Side::Bottom {
+            (x as f32 * 10.0, y as f32 * 10.0)
+        } else {
+            ((WIDTH - x - 1) as f32 * 10.0, (HEIGHT - y - 1) as f32 * 10.0)
+        }
+    }
+
+    fn game_position(&self, (x, y): (f32, f32)) -> Position {
+        if self.side == Side::Bottom {
+            ((x / 10.0).floor() as u8, (y / 10.0).floor() as u8)
+        } else {
+            (WIDTH - 1 - (x / 10.0).floor() as u8, HEIGHT - 1 - (y / 10.0).floor() as u8)
+        }
     }
 
     fn set_my_turn(&mut self, is_my_turn: bool) -> JsError {
@@ -392,24 +460,24 @@ impl Board {
         evt.prevent_default();
 
         let (mx, my) = self.mouse_pos(evt.as_ref());
-        let x = mx.round() as i32 / 10;
-        let y = my.round() as i32 / 10;
-        if x < 0 || y < 0 {
+        if mx < 0.0 || my < 0.0 {
             return Ok(());
         }
-        let position = (x as u8, y as u8);
-        if !man_in_bounds(position) || self.grid.contains_key(&position) {
+        let game_position = self.game_position((mx, my));
+        let (mx, my) = self.grid_position(game_position);
+        if !man_in_bounds(game_position) || self.grid.contains_key(&game_position) {
             return Ok(());
         }
-        let man = self.new_man()?;
+        self.hide_man_shadow()?;
+        let man = self.new_man(1.0)?;
         self.pieces_group.append_child(&man)?;
         man.set_attribute("transform",
-                          &format!("translate({} {})", x * 10, y * 10))?;
-        self.grid.insert(position, man);
+                          &format!("translate({} {})", mx, my))?;
+        self.grid.insert(game_position, man);
 
-        self.mov = Some(Move::Man(position));
+        self.mov = Some(Move::Man(game_position));
         let mut game = self.game_states.last().unwrap().clone();
-        game.place_man(position);
+        game.place_man(game_position);
         self.game_states.push(game);
 
         self.accept_button.set_disabled(false);
@@ -417,6 +485,10 @@ impl Board {
 
 
         Ok(())
+    }
+
+    fn hide_man_shadow(&self) -> JsError {
+        self.man_shadow.set_attribute("visibility", "hidden")
     }
 
     fn on_board_hover(&mut self, evt: PointerEvent) -> JsError {
@@ -427,13 +499,13 @@ impl Board {
         evt.prevent_default();
 
         let (mx, my) = self.mouse_pos(evt.as_ref());
-        let x = (mx / 10.0).floor() as u8;
-        let y = (my / 10.0).floor() as u8;
+        let game_position = self.game_position((mx, my));
+        let (mx, my) = self.grid_position(game_position);
 
-        if !self.grid.contains_key(&(x, y)) && man_in_bounds((x, y)) {
+        if !self.grid.contains_key(&game_position) && man_in_bounds(game_position) {
             self.man_shadow.set_attribute(
                 "transform", &format!("translate({} {})",
-                                      x * 10, y * 10))?;
+                                      mx, my))?;
             self.man_shadow.set_attribute("visibility", "visible")?;
         } else {
             self.man_shadow.set_attribute("visibility", "hidden")?;
@@ -451,6 +523,8 @@ impl Board {
             return Ok(());
         }
         evt.prevent_default();
+
+        self.hide_man_shadow()?;
 
         let mut target = evt.target()
             .unwrap()
@@ -472,11 +546,10 @@ impl Board {
         }
         let (mx, my) = self.mouse_pos(evt.as_ref());
         let (tx, ty) = Self::get_transform(&target);
+        let game_position = self.game_position((mx, my));
 
-        let x = tx.round() as i32 / 10;
-        let y = ty.round() as i32 / 10;
         self.pieces_group.remove_child(&target)?;
-        self.grid.remove(&(x as u8, y as u8));
+        self.grid.remove(&game_position);
 
         // Move to the back of the SVG object, so it's on top
         self.svg.append_child(&target)?;
@@ -527,9 +600,7 @@ impl Board {
             }
 
             let pos = (x, y);
-
-            let tx = (x / 10.0).round() as u8;
-            let ty = (y / 10.0).round() as u8;
+            let (tx, ty) = self.game_position(pos);
 
             if self.game_states.last().unwrap().clone().move_ball(vec![(tx, ty)]).is_some() {
                 return Ok((pos, DropTarget::DropBall((tx, ty))));
@@ -550,9 +621,10 @@ impl Board {
             d.target.set_attribute("transform",
                                    &format!("translate({} {})", pos.0, pos.1))?;
             if let DropTarget::DropBall((gx, gy)) = drop_target {
+                let (gx, gy) = self.grid_position((gx, gy));
                 d.shadow.set_attribute(
                     "transform", &format!("translate({} {})",
-                         gx as f32 * 10.0, gy as f32 * 10.0))?;
+                         gx, gy))?;
                 d.shadow.set_attribute("visibility", "visible")
             } else {
                 d.shadow.set_attribute("visibility", "hidden")
@@ -583,11 +655,12 @@ impl Board {
                     self.pieces_group.remove_child(&d.shadow)?;
                     let game = self.game_states.last().unwrap();
                     self.grid.insert(game.ball, d.target.clone());
+                    let (x, y) = self.grid_position(game.ball);
                     DragAnim::ReturnBall(ReturnBall(
                         TileAnimation {
                             target: d.target.clone(),
                             start: pos,
-                            end: (game.ball.0 as f32 * 10.0, game.ball.1 as f32 * 10.0),
+                            end: (x, y),
                             t0: evt.time_stamp()
                         }))
                 },
@@ -605,11 +678,12 @@ impl Board {
                     let remove_men = game.move_ball(vec![(gx, gy)]).unwrap();
                     self.game_states.push(game);
                     let target = d.target.clone();
+                    let (gx, gy) = self.grid_position((gx, gy));
                     DragAnim::DropBall(DropBall {
                         anim: TileAnimation {
                             target,
                             start: (pos.0, pos.1),
-                            end: (gx as f32 * 10.0, gy as f32 * 10.0),
+                            end: (gx, gy),
                             t0: evt.time_stamp(),
                         },
                         shadow: d.shadow.clone(),
@@ -638,12 +712,12 @@ impl Board {
                     if d.anim.run(t)? {
                         self.request_animation_frame()?;
                     } else {
-                        for &(x, y) in &add_men {
-                            let man = self.new_man()?;
+                        for &(game_pos, grid_pos) in &add_men {
+                            let man = self.new_man(1.0)?;
                             self.pieces_group.append_child(&man)?;
                             man.set_attribute("transform",
-                                              &format!("translate({} {})", x * 10, y * 10))?;
-                            self.grid.insert((x, y), man);
+                                              &format!("translate({} {})", grid_pos.0, grid_pos.1))?;
+                            self.grid.insert(game_pos, man);
                         }
                         self.svg.remove_child(&target)?;
                         self.pieces_group.append_child(&target)?;
@@ -678,6 +752,18 @@ impl Board {
                     } else {
                         self.svg.remove_child(&j.target)?;
                         self.pieces_group.append_child(&j.target)?;
+                        for men in &j.men {
+                            for man in men {
+                                self.pieces_group.remove_child(man)?;
+                            }
+                        }
+                        self.state = BoardState::Idle;
+                    }
+                },
+                DragAnim::PlaceMan(p) => {
+                    if p.run(t)? {
+                        self.request_animation_frame()?;
+                    } else {
                         self.state = BoardState::Idle;
                     }
                 }
@@ -693,10 +779,10 @@ impl Board {
                                      .unchecked_ref())
     }
 
-    fn new_man(&self) -> JsResult<Element> {
+    fn new_man(&self, size: f32) -> JsResult<Element> {
         let g = self.doc.create_svg_element("g")?;
         let s = self.doc.create_svg_element("circle")?;
-        s.set_attribute("r", "4.0")?;
+        s.set_attribute("r", &format!("{}", 4.0 * size))?;
         s.set_attribute("cx", "5.0")?;
         s.set_attribute("cy", "5.0")?;
 
@@ -739,6 +825,8 @@ impl Board {
             return Ok(());
         }
 
+        self.hide_man_shadow()?;
+
         let mut mov = None;
         std::mem::swap(&mut mov, &mut self.mov);
         let game = self.game_states.pop().unwrap();
@@ -754,16 +842,19 @@ impl Board {
                 self.grid.insert(prev_game.ball, t.clone());
                 self.pieces_group.remove_child(&t)?;
                 self.svg.append_child(&t)?;
+                let start = self.grid_position(game.ball);
+                let end = self.grid_position(prev_game.ball);
                 let drag = DragAnim::UndoBall(UndoBall {
                     anim: TileAnimation {
                         target: t,
-                        start: (game.ball.0 as f32 * 10.0,
-                                game.ball.1 as f32 * 10.0),
-                        end: (prev_game.ball.0 as f32 * 10.0,
-                              prev_game.ball.1 as f32 * 10.0),
+                        start,
+                        end,
                         t0: evt.time_stamp()
                     },
-                    add_men: prev_game.move_ball(vec![game.ball]).unwrap(),
+                    add_men: prev_game.move_ball(vec![game.ball]).unwrap()
+                        .iter()
+                        .map(|&pos| (pos, self.grid_position(pos)))
+                        .collect(),
                 });
                 self.state = BoardState::Animation(drag);
                 self.request_animation_frame()?;
@@ -782,16 +873,10 @@ impl Board {
 
     /*  Attempts to make the given move. */
     fn make_move(&mut self, _evt: Event) -> JsResult<Move> {
-        /*
-        if self.state != BoardState::Idle {
-            return Ok(Move::Place(Vec::new()));
-        }
-         */
+        self.hide_man_shadow()?;
 
         self.accept_button.set_disabled(true);
         self.undo_button.set_disabled(true);
-
-        self.set_my_turn(false)?;
 
         Ok(self.mov.as_ref().unwrap().clone())
     }
@@ -1033,9 +1118,10 @@ impl CreateOrJoin {
             .set_hidden(false);
 
         let player_name = self.name_input.value();
-        let p = Playing::new(self.base, room_name, player_name.clone(), opponent,
+        let mut p = Playing::new(self.base, room_name, player_name.clone(), opponent,
                                  active_side, your_side,
                                  game)?;
+        p.set_my_turn(active_side == your_side)?;
         p.on_information(&format!("Welcome, {}!", player_name))?;
         Ok(p)
     }
@@ -1088,7 +1174,7 @@ impl Playing {
             .dyn_into()?;
         s.set_text_content(Some(&room_name));
 
-        let mut board = Board::new(&base.doc, game)?;
+        let mut board = Board::new(&base.doc, game, your_side)?;
 
         if active_side == your_side {
             board.set_my_turn(true)?;
@@ -1139,7 +1225,38 @@ impl Playing {
         out.change_player_name(your_side, &format!("{} (you)", player_name));
         out.change_player_name(your_side.opposite(), opponent.as_deref().unwrap_or(""));
 
+        out.set_my_turn(active_side == your_side)?;
+
         Ok(out)
+    }
+
+    fn set_my_turn(&mut self, my_turn: bool) -> JsError {
+        self.active_side =
+            if my_turn {
+                self.your_side
+            } else {
+                self.your_side.opposite()
+            };
+        self.score_table.child_nodes()
+            .item(Self::row(self.active_side.opposite()) + 3)
+            .unwrap()
+            .dyn_into::<HtmlElement>()?
+            .class_list()
+            .remove_1("active")?;
+        self.score_table.child_nodes()
+            .item(Self::row(self.active_side) + 3)
+            .unwrap()
+            .dyn_into::<HtmlElement>()?
+            .class_list()
+            .add_1("active")?;
+
+        if self.active_side == self.your_side {
+            self.on_information("It's your turn!")
+        } else {
+            self.on_information("It's your opponent's turn!")
+        }?;
+
+        self.board.set_my_turn(self.active_side == self.your_side)
     }
 
     fn on_chat(&self, from: &str, msg: &str) -> JsError {
@@ -1227,11 +1344,6 @@ impl Playing {
 
     fn on_opponent_joined(&mut self, name: &str) -> JsError {
         self.change_player_name(self.your_side.opposite(), name);
-        let c = self.score_table.child_nodes()
-            .item(Self::row(self.your_side.opposite()) + 3)
-            .unwrap()
-            .dyn_into::<HtmlElement>()?;
-        c.class_list().remove_1("disconnected")?;
         self.on_information(&format!("{} joined the room", name))?;
         self.opponent = Some(name.to_string());
         Ok(())
@@ -1239,11 +1351,6 @@ impl Playing {
 
     fn on_opponent_disconnected(&mut self) -> JsError {
         self.change_player_name(self.your_side.opposite(), "");
-        let c = self.score_table.child_nodes()
-            .item(Self::row(self.your_side.opposite()) + 3)
-            .unwrap()
-            .dyn_into::<HtmlElement>()?;
-        c.class_list().add_1("disconnected")?;
         self.on_information(&format!("{} disconnected",
                                      self.opponent.as_ref().unwrap()))?;
         self.opponent = None;
@@ -1287,6 +1394,7 @@ impl Playing {
             return Ok(());
         }
         console_log!("Accept button pressed");
+        self.set_my_turn(false)?;
         self.base.send(ClientMessage::Move(self.board.make_move(evt)?))
     }
 
@@ -1301,27 +1409,37 @@ impl Playing {
                 self.board.grid.insert(*jumps.last().unwrap(), ball.clone());
                 self.board.state = BoardState::Animation(DragAnim::JumpBall(JumpBall {
                     target: ball,
-                    points: std::iter::once((start_pos.0 as f32 * 10.0, start_pos.1 as f32 * 10.0))
-                        .chain(jumps.iter().map(|pos| (pos.0 as f32 * 10.0, pos.1 as f32 * 10.0)))
+                    points: std::iter::once(self.board.grid_position(start_pos))
+                        .chain(jumps.iter().map(|&pos| self.board.grid_position(pos)))
                         .collect(),
                     t0,
+                    men: jumps.iter()
+                        .fold((self.board.game_states.last().unwrap().clone(), Vec::new()), |(mut game, mut v), &pos| {
+                            v.push(game.move_ball(vec![pos]).unwrap().iter()
+                                .map(|pos| self.board.grid.get(pos).unwrap().clone())
+                                .collect());
+                            (game, v)
+                        }).1,
                 }));
                 self.board.request_animation_frame()?;
-
-                for remove_man in self.board.game_states.last_mut().unwrap().move_ball(jumps).unwrap() {
-                    self.board.pieces_group.remove_child(&self.board.grid.remove(&remove_man).unwrap())?;
-                }
+                self.board.game_states.last_mut().unwrap().move_ball(jumps);
             }
             Move::Man(pos) => {
-                let man = self.board.new_man()?;
+                let man = self.board.new_man(0.0)?;
                 self.board.pieces_group.append_child(&man)?;
+                let (x, y) = self.board.grid_position(pos);
                 man.set_attribute("transform",
-                                &format!("translate({} {})", pos.0 * 10, pos.1 * 10))?;
-                self.board.grid.insert(pos, man);
+                                &format!("translate({} {})", x, y))?;
+                self.board.grid.insert(pos, man.clone());
                 self.board.game_states.last_mut().unwrap().place_man(pos);
+                self.board.state = BoardState::Animation(DragAnim::PlaceMan(PlaceMan {
+                    target: man,
+                    t0: get_time_ms(),
+                }));
+                self.board.request_animation_frame()?;
             }
         }
-        self.board.set_my_turn(true)
+        self.set_my_turn(true)
     }
 
     fn on_move_accepted(&mut self) -> JsError {
