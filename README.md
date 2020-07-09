@@ -27,7 +27,7 @@ and [Dreamhost](https://www.dreamhost.com/) for domain registration.
 ## Initial setup
 ```
 sudo apt update
-sudo apt install build-essentials libssl-dev pkg-config
+sudo apt install build-essential libssl-dev pkg-config
 curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 ```
 
