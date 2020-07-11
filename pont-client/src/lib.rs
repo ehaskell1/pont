@@ -23,7 +23,7 @@ use web_sys::{
     SvgGraphicsElement,
     WebSocket,
 };
-use js_sys::{Array, Object};
+use js_sys::{Array, Map, Object};
 
 use pont_common::{ClientMessage, ServerMessage, Side, Game, Position, Move, PositionState,
 man_in_bounds, WIDTH, HEIGHT};
@@ -1118,9 +1118,9 @@ extern "C" {
 }
 
 fn new_sound(source: &str) -> Howl {
-    let o = Object::new();
-    Object::define_property(&o, &JsValue::from_str("src"), Array::of1(&JsValue::from_str(source)).as_ref());
-    Howl::new(o)
+    let map = Map::new();
+    map.set(&JsValue::from_str("src"), Array::of1(&JsValue::from_str(source)).as_ref());
+    Howl::new(map.into())
 }
 
 impl Connecting {
