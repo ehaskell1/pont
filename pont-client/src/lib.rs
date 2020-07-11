@@ -1111,17 +1111,32 @@ extern "C" {
     type Howl;
 
     #[wasm_bindgen(constructor)]
-    fn new(source: Object) -> Howl;
+    fn new(source: SoundSource) -> Howl;
 
     #[wasm_bindgen(method)]
     fn play(this: &Howl);
 }
 
+#[wasm_bindgen]
+pub struct SoundSource {
+    src: Array,
+}
+
 fn new_sound(source: &str) -> Howl {
+    Howl::new(SoundSource {
+        src: Array::of1(&JsValue::from_str(source).as_ref()),
+    })
+}
+
+/*
+fn new_sound(source: &str) -> Howl {
+    let o = Object::new();
+    Object::set_property(&o, JsValue::from_str("src").as_ref(), Array::of1(&JsValue::from_str(source)))
     let map = Map::new();
     map.set(&JsValue::from_str("src"), Array::of1(&JsValue::from_str(source)).as_ref());
     Howl::new(map.into())
 }
+*/
 
 impl Connecting {
     fn on_connected(self) -> JsResult<CreateOrJoin> {
