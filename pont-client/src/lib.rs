@@ -23,6 +23,7 @@ use web_sys::{
     SvgGraphicsElement,
     WebSocket,
 };
+use js_sys::{Array, Object};
 
 use pont_common::{ClientMessage, ServerMessage, Side, Game, Position, Move, PositionState,
 man_in_bounds, WIDTH, HEIGHT};
@@ -259,6 +260,9 @@ pub struct Board {
     touch_start_cb: JsClosure<Event>,
 
     anim_cb: JsClosure<f64>,
+
+    place_sound: Howl,
+    remove_sound: Howl,
 }
 
 impl Board {
@@ -400,6 +404,8 @@ impl Board {
             man_shadow,
             side,
             new_game: None,
+            place_sound: new_sound("./place.mp3"),
+            remove_sound: new_sound("./remove.mp3"),
         };
 
         let ball = out.new_ball()?;
@@ -537,6 +543,7 @@ impl Board {
         self.pieces_group.append_child(&man)?;
         man.set_attribute("transform",
                           &format!("translate({} {})", mx, my))?;
+        Howl::play(&self.place_sound);
         self.grid.insert(game_position, man);
 
         self.mov = Some(Move::Man(game_position));
@@ -1097,6 +1104,24 @@ fn set_event_cb<E, F, T>(obj: &E, name: &str, f: F) -> JsClosure<T>
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+// Howler
+#[wasm_bindgen]
+extern "C" {
+    type Howl;
+
+    #[wasm_bindgen(constructor)]
+    fn new(source: Object) -> Howl;
+
+    #[wasm_bindgen(method)]
+    fn play(this: &Howl);
+}
+
+fn new_sound(source: &str) -> Howl {
+    let o = Object::new();
+    Object::define_property(&o, &JsValue::from_str("src"), Array::of1(&JsValue::from_str(source)).as_ref());
+    Howl::new(o)
+}
 
 impl Connecting {
     fn on_connected(self) -> JsResult<CreateOrJoin> {
