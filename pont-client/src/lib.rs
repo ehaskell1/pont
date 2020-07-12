@@ -1119,7 +1119,7 @@ extern "C" {
 
 fn new_sound(source: &str) -> Howl {
     let o = Object::new();
-    Object::define_property(&o, &JsValue::from_str("src"), Object::try_from(Array::of1(&JsValue::from_str(source)).as_ref()).unwrap());
+    Object::define_property(&o, &JsValue::from_str("src"), &Array::of1(&JsValue::from_str(source)).into());
     let src = Object::get_own_property_descriptor(&o, &JsValue::from_str("src"));
     assert!(src.is_object(), "src is not object");
     let length = Object::get_own_property_descriptor(&Object::try_from(&src).unwrap(), &JsValue::from_str("length"));
