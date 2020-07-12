@@ -23,7 +23,7 @@ use web_sys::{
     SvgGraphicsElement,
     WebSocket,
 };
-use js_sys::{Array, Map, Object};
+use js_sys::{Array, Map, Object, Reflect};
 
 use pont_common::{ClientMessage, ServerMessage, Side, Game, Position, Move, PositionState,
 man_in_bounds, WIDTH, HEIGHT};
@@ -1119,12 +1119,13 @@ extern "C" {
 
 fn new_sound(source: &str) -> Howl {
     let o = Object::new();
-    Object::define_property(&o, &JsValue::from_str("src"), &Array::of1(&JsValue::from_str(source)).into());
-    let src = Object::get_own_property_descriptor(&o, &JsValue::from_str("src"));
+    Reflect::set(o.as_ref(), &JsValue::from_str("src"), Array::of1(&JsValue::from_str(source)).as_ref()).unwrap();
+    let src = Reflect::get(o.as_ref(), &JsValue::from_str("src")).unwrap();
     assert!(src.is_object(), "src is not object");
-    let length = Object::get_own_property_descriptor(&Object::try_from(&src).unwrap(), &JsValue::from_str("length"));
+    let length = Reflect::get(&src, &JsValue::from_str("length"));
     console_log!("{:?}", length);
-    let length = length.as_f64();
+    assert!(length.is_ok(), "no length field");
+    let length = length.unwrap().as_f64();
     assert!(length.is_some(), "length is not a number");
     console_log!("length = {}", length.unwrap());
     Howl::new(o)
