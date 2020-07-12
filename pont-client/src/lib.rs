@@ -1111,21 +1111,16 @@ extern "C" {
     type Howl;
 
     #[wasm_bindgen(constructor)]
-    fn new(source: SoundSource) -> Howl;
+    fn new(source: Object) -> Howl;
 
     #[wasm_bindgen(method)]
     fn play(this: &Howl);
 }
 
-#[wasm_bindgen]
-pub struct SoundSource {
-    src: Array,
-}
-
 fn new_sound(source: &str) -> Howl {
-    Howl::new(SoundSource {
-        src: Array::of1(&JsValue::from_str(source).as_ref()),
-    })
+    let o = Object::new();
+    Object::define_property(&o, &JsValue::from_str("src"), Object::try_from(Array::of1(&JsValue::from_str(source)).as_ref()).unwrap());
+    Howl::new(o)
 }
 
 /*
