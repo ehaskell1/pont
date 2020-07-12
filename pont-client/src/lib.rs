@@ -23,7 +23,7 @@ use web_sys::{
     SvgGraphicsElement,
     WebSocket,
 };
-use js_sys::{Array, Map, Object, Reflect};
+use js_sys::{Array, Object, Reflect};
 
 use pont_common::{ClientMessage, ServerMessage, Side, Game, Position, Move, PositionState,
 man_in_bounds, WIDTH, HEIGHT};
@@ -622,6 +622,7 @@ impl Board {
 
         self.pieces_group.remove_child(&target)?;
         self.grid.remove(&game_position);
+        Howl::play(&self.remove_sound);
 
         // Move to the back of the SVG object, so it's on top
         self.svg.append_child(&target)?;
@@ -793,6 +794,7 @@ impl Board {
                         }
                         self.svg.remove_child(&target)?;
                         self.pieces_group.append_child(&target)?;
+                        Howl::play(&self.place_sound);
                         self.state = BoardState::Idle;
                     }
                 }
@@ -806,6 +808,7 @@ impl Board {
                         self.pieces_group.remove_child(&d.shadow)?;
                         self.svg.remove_child(&d.anim.target)?;
                         self.pieces_group.append_child(&d.anim.target)?;
+                        Howl::play(&self.place_sound);
                         self.state = BoardState::Idle;
                     }
                 },
@@ -815,6 +818,7 @@ impl Board {
                     } else {
                         self.svg.remove_child(&d.0.target)?;
                         self.pieces_group.append_child(&d.0.target)?;
+                        Howl::play(&self.place_sound);
                         self.state = BoardState::Idle;
                     }
                 },
@@ -829,6 +833,7 @@ impl Board {
                                 self.pieces_group.remove_child(man)?;
                             }
                         }
+                        Howl::play(&self.place_sound);
                         self.state = BoardState::Idle;
                         if self.new_game.is_some() {
                             self.start_new_game()?;
@@ -839,6 +844,7 @@ impl Board {
                     if p.run(t)? {
                         self.request_animation_frame()?;
                     } else {
+                        Howl::play(&self.place_sound);
                         self.state = BoardState::Idle;
                         if self.new_game.is_some() {
                             self.start_new_game()?;
@@ -920,6 +926,7 @@ impl Board {
                 self.grid.insert(prev_game.ball, t.clone());
                 self.pieces_group.remove_child(&t)?;
                 self.svg.append_child(&t)?;
+                Howl::play(&self.remove_sound);
                 let start = self.grid_position(game.ball);
                 let end = self.grid_position(prev_game.ball);
                 let drag = DragAnim::UndoBall(UndoBall {
@@ -939,6 +946,7 @@ impl Board {
             },
             Some(Move::Man(pos)) => {
                 self.pieces_group.remove_child(&self.grid.remove(&pos).unwrap())?;
+                Howl::play(&self.remove_sound);
             },
             _ => unreachable!(),
         }
@@ -1120,26 +1128,8 @@ extern "C" {
 fn new_sound(source: &str) -> Howl {
     let o = Object::new();
     Reflect::set(o.as_ref(), &JsValue::from_str("src"), Array::of1(&JsValue::from_str(source)).as_ref()).unwrap();
-    let src = Reflect::get(o.as_ref(), &JsValue::from_str("src")).unwrap();
-    assert!(src.is_object(), "src is not object");
-    let length = Reflect::get(&src, &JsValue::from_str("length"));
-    console_log!("{:?}", length);
-    assert!(length.is_ok(), "no length field");
-    let length = length.unwrap().as_f64();
-    assert!(length.is_some(), "length is not a number");
-    console_log!("length = {}", length.unwrap());
     Howl::new(o)
 }
-
-/*
-fn new_sound(source: &str) -> Howl {
-    let o = Object::new();
-    Object::set_property(&o, JsValue::from_str("src").as_ref(), Array::of1(&JsValue::from_str(source)))
-    let map = Map::new();
-    map.set(&JsValue::from_str("src"), Array::of1(&JsValue::from_str(source)).as_ref());
-    Howl::new(map.into())
-}
-*/
 
 impl Connecting {
     fn on_connected(self) -> JsResult<CreateOrJoin> {
@@ -1477,7 +1467,6 @@ impl Playing {
     }
 
     fn on_board_click(&mut self, evt: PointerEvent) -> JsError {
-        console_log!("Board was clicked");
         self.board.on_board_click(evt)
     }
 
@@ -1486,7 +1475,6 @@ impl Playing {
     }
 
     fn on_pointer_down(&mut self, evt: PointerEvent) -> JsError {
-        console_log!("Pointer down");
         self.board.on_pointer_down(evt)
     }
 
@@ -1495,12 +1483,10 @@ impl Playing {
     }
 
     fn on_pointer_up(&mut self, evt: PointerEvent) -> JsError {
-        console_log!("Pointer up");
         self.board.on_pointer_up(evt)
     }
 
     fn on_undo_button(&mut self, evt: Event) -> JsError {
-        console_log!("Undo button pressed");
         self.board.on_undo_button(evt)
     }
 
@@ -1508,7 +1494,6 @@ impl Playing {
         if self.board.state != BoardState::Idle {
             return Ok(());
         }
-        console_log!("Accept button pressed");
         self.set_my_turn(false)?;
         self.base.send(ClientMessage::Move(self.board.make_move(evt)?))
     }
@@ -1521,6 +1506,7 @@ impl Playing {
                 let t0 = get_time_ms();
                 self.board.pieces_group.remove_child(&ball)?;
                 self.board.svg.append_child(&ball)?;
+                Howl::play(&self.board.remove_sound);
                 self.board.state = BoardState::Animation(DragAnim::JumpBall(JumpBall {
                     target: ball.clone(),
                     points: std::iter::once(self.board.grid_position(start_pos))
