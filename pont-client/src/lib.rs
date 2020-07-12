@@ -1122,7 +1122,9 @@ fn new_sound(source: &str) -> Howl {
     Object::define_property(&o, &JsValue::from_str("src"), Object::try_from(Array::of1(&JsValue::from_str(source)).as_ref()).unwrap());
     let src = Object::get_own_property_descriptor(&o, &JsValue::from_str("src"));
     assert!(src.is_object(), "src is not object");
-    assert!(Object::get_own_property_descriptor(&Object::try_from(&src).unwrap(), &JsValue::from_str("length")).is_object(), "src.length is not object");
+    let length = Object::get_own_property_descriptor(&Object::try_from(&src).unwrap(), &JsValue::from_str("length")).as_f64();
+    assert!(length.is_some(), "length is not a number");
+    console_log!("length = {}", length.unwrap());
     Howl::new(o)
 }
 
